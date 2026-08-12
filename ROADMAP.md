@@ -56,52 +56,67 @@ secret handling on top of the Phase 1 skeleton.
 
 ---
 
-## Phase 3 — Agent Architect + Runtime ← NEXT
+## Phase 3 — Agent Architect + Runtime ✅ COMPLETE
 
 **Objective:** First functional agent system: create conversationally, run
-real agent loops through the queue.
+real agent loops.
 
-**Depends on:** Phase 2 (complete).
+**Delivered**
+- `@bridge/providers`: Anthropic adapter (official SDK) and one
+  OpenAI-compatible adapter covering OpenAI, OpenRouter, local gateways and
+  Ollama. Normalized messages, tool calls, usage and stop reasons — including
+  `refusal`, which is a successful response with no usable content. Sampling
+  parameters are deliberately not forwarded to Anthropic models that reject
+  them. Cost estimation from a published-price table that returns *unknown*
+  rather than guessing.
+- `@bridge/runtime`: the compiler (Manifest → RuntimePlan, resolving model
+  roles and tool grants up front), the agent loop, and the durable executor.
+- Agent loop with **subagent delegation** exposed as `delegate_to_<name>`
+  tools, bounded by iteration and depth limits, honouring cancellation, run
+  deadlines and the permission engine at the tool-dispatch point.
+- Run state machine claimed atomically from Postgres with heartbeats,
+  stale-run reclamation, bounded retries and per-step tracing (ADR-0012).
+- Lifecycle API: deploy (gated on the required providers being connected),
+  stop, start a run, list runs, read a run with its full trace, cancel.
+- Conversations and message history, replayed into subsequent runs.
+- Agent Architect: `draft` from a description and `edit` in natural language,
+  both looping on validation errors until the manifest parses, and both
+  returning a *proposal* the user accepts through the ordinary agent
+  endpoints.
+- Per-run token and cost capture, summed across models in a multi-model run.
+- Web: deploy/stop, task input, live-polling run list, expandable trace,
+  "describe what you want" agent design, and natural-language editing with
+  accept/discard.
 
-**Deliverables**
-- Anthropic + OpenAI + OpenAI-compatible provider adapters implementing
-  `@bridge/sdk` Provider (streaming + usage capture).
-- Agent Architect: conversational creation/customisation that emits Manifest
-  edits (template → tweak, and blank → propose); user inspects diff before
-  apply. Uses structured output against `@bridge/spec`.
-- Harness compiler: Manifest → runtime plan (resolved models per agent,
-  tool grants, limits) with validation errors surfaced.
-- Core runtime in worker: run state machine (`queued → running →
-  waiting_approval → succeeded/failed/cancelled`), checkpoints in Postgres,
-  cancellation, retries with backoff, timeouts from `runtime.limits`.
-- Agent/subagent delegation per `canDelegateTo`; conversation history +
-  working memory (Postgres-backed, interfaces from ARCHITECTURE §9).
-- Runtime lifecycle API: deploy/start/stop/restart agent; run history.
-- Token/cost capture per run from provider usage.
+**Acceptance criteria — met**
+- A user creates an agent (template, blank, raw manifest, or AI-designed),
+  deploys it, sends a task, and watches it complete with visible run state,
+  token usage and cost; stop/deploy and cancellation work.
+- Different agents in one manifest can use different providers (compiler
+  resolves per-agent `ModelRef`s; the software-team template uses two).
+- A worker killed mid-run has its run reclaimed and completed by another.
+- Verified end to end against a live API with no Docker running.
 
-**Acceptance criteria**
-- User creates an agent from template or scratch, customises it in natural
-  language, deploys it, sends it a task, watches it complete with visible
-  run states; stop/restart works; a killed worker resumes queued runs.
-- Different agents in one manifest can use different providers.
-- The whole loop works on the in-process queue and embedded database with no
-  Docker running, and identically on the Redis/Postgres drivers.
-
-**Tests:** state machine transitions (unit), resumability (kill worker
-mid-run in integration test), provider adapter contract tests against
-`MockProvider` + recorded fixtures, compiler golden tests (manifest →
-runtime plan), cost accounting.
-
-**Risks:** runtime loop complexity — keep the loop small and push variation
-into data; architect quality — constrain with schemas + validation retries.
+**Deferred from this phase**
+- Streaming into the UI: adapters implement `stream()` for text, but the loop
+  uses `complete()` and the web client polls. Phase 5 wires SSE through.
+- Long-term memory and knowledge: `memory.longTerm`/`knowledge` are honoured
+  in the spec but only conversation history is implemented.
+- Real tools: the loop consults permissions and records the attempt, then
+  tells the model the tool is unavailable. Phase 4 registers implementations
+  at that exact dispatch point.
+- `waiting_approval` exists in the state machine but nothing enters it until
+  approvals land in Phase 4.
 
 ---
 
-## Phase 4 — Tools, MCP, Permissions and Approvals
+## Phase 4 — Tools, MCP, Permissions and Approvals ← NEXT
 
 **Objective:** Agents become useful *and* controllable.
 
-**Depends on:** Phase 3.
+**Depends on:** Phase 3 (complete). The tool-dispatch point, permission
+evaluation and the `waiting_approval` state already exist in the loop —
+this phase fills them in rather than restructuring them.
 
 **Deliverables**
 - Tool registry (native tools: HTTP, filesystem-scoped, search, code exec

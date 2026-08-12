@@ -18,10 +18,16 @@ cp .env.example .env
 pnpm dev
 ```
 
-Open http://localhost:3000, create an account, and you have a workspace with
-agents. The database is embedded (Postgres compiled to WASM, stored in
-`apps/api/.bridge/data`) and the job queue runs in-process, so there is
-nothing to install, start, or configure.
+Open http://localhost:3000, create an account, connect a model provider, and
+create an agent — from a template, from scratch, or by describing what you
+want and letting Bridge design it. Deploy it, send it a task, and watch the
+run complete with its full trace.
+
+The database is embedded (Postgres compiled to WASM, stored in
+`apps/api/.bridge/data`) and the agent runtime runs inside the API process, so
+there is nothing to install, start, or configure. Any OpenAI-compatible
+endpoint works as a provider, including a local Ollama or LM Studio — so you
+can run Bridge end to end with no hosted API key at all.
 
 ### Optional: run against Postgres + Redis
 
@@ -53,16 +59,18 @@ of model location — a locally running agent can still use hosted APIs.
 
 ```text
 apps/
-  api/       Control plane — Hono HTTP API (auth, workspaces, agents, providers)
-  worker/    Data plane — background jobs and schedules
+  api/       Control plane — Hono HTTP API (auth, workspaces, agents, runs, architect)
+  worker/    Data plane — hosts the run executor for server deployments
   web/       Web client — Vite + React SPA
 packages/
-  spec/      @bridge/spec  — Bridge Manifest, dashboard schema, permissions, events, templates
-  sdk/       @bridge/sdk   — provider / tool / channel adapter interfaces
-  core/      @bridge/core  — ids, errors, env, logging, crypto
-  db/        @bridge/db    — Drizzle schema, migrations, server + embedded drivers
-  queue/     @bridge/queue — JobQueue interface, BullMQ + in-process drivers
-  ui/        @bridge/ui    — design tokens, brand assets
+  spec/      @bridge/spec      — Bridge Manifest, dashboard schema, permissions, events, templates
+  sdk/       @bridge/sdk       — provider / tool / channel adapter interfaces
+  core/      @bridge/core      — ids, errors, env, logging, crypto
+  db/        @bridge/db        — Drizzle schema, migrations, server + embedded drivers
+  queue/     @bridge/queue     — JobQueue interface, BullMQ + in-process drivers
+  providers/ @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing
+  runtime/   @bridge/runtime   — compiler, agent loop, run executor, secrets
+  ui/        @bridge/ui        — design tokens, brand assets
 docs/architecture/  ADRs
 ```
 
@@ -70,7 +78,7 @@ docs/architecture/  ADRs
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | Run api (:4000), worker and web (:3000) in watch mode |
+| `pnpm dev` | Run api (:4000, hosts the runtime), worker and web (:3000) |
 | `pnpm test` | Full test suite (runs against embedded Postgres) |
 | `pnpm typecheck` | Strict TypeScript across the workspace |
 | `pnpm lint` / `pnpm lint:fix` | Biome lint + format |
@@ -84,7 +92,8 @@ docs/architecture/  ADRs
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `pglite:./.bridge/data` | `postgres://…` for a server, `pglite:<path>` embedded |
-| `REDIS_URL` | unset | Set to use BullMQ; unset runs the queue in-process |
+| `REDIS_URL` | unset | Set to use BullMQ for scheduled jobs; unset runs them in-process |
+| `BRIDGE_EMBEDDED_RUNTIME` | auto | `1`/`0` to force the run executor in or out of the API process |
 | `BRIDGE_SECRET_KEY` | generated in dev | Base64 32-byte key encrypting stored credentials. **Required in production** — without a stable key, saved provider keys cannot be decrypted after a restart. Generate with `openssl rand -base64 32`. |
 | `API_PORT` | `4000` | API port |
 

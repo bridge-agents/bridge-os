@@ -15,6 +15,13 @@
       "when": 1786529454087,
       "tag": "0001_complete_dazzler",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786536599937,
+      "tag": "0002_moaning_nehzno",
+      "breakpoints": true
     }
   ]
 }

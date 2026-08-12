@@ -1,5 +1,5 @@
 import { BridgeError, newAgentId } from "@bridge/core";
-import { agents } from "@bridge/db";
+import { agents, appendEvent } from "@bridge/db";
 import {
   blankManifest,
   getTemplate,
@@ -12,7 +12,6 @@ import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth, requireWorkspace } from "./auth.js";
-import { recordEvent } from "./events.js";
 import { type AppDeps, type AppEnv, parseBody } from "./http.js";
 
 /** Every creation path converges here: one validated manifest, or an error. */
@@ -99,7 +98,7 @@ export function agentRoutes(deps: AppDeps) {
       specVersion: SPEC_VERSION,
       manifest,
     });
-    await recordEvent(deps.db, "agent.created", {
+    await appendEvent(deps.db, "agent.created", {
       workspaceId,
       agentId,
       data: { template: manifest.meta.template ?? null, target: manifest.deployment.target },
@@ -140,7 +139,7 @@ export function agentRoutes(deps: AppDeps) {
       .returning({ id: agents.id });
     if (updated.length === 0) throw new BridgeError("not_found", "agent not found");
 
-    await recordEvent(deps.db, "agent.updated", { workspaceId, agentId });
+    await appendEvent(deps.db, "agent.updated", { workspaceId, agentId });
     return c.json({ agent: { id: agentId, manifest } });
   });
 
@@ -153,7 +152,7 @@ export function agentRoutes(deps: AppDeps) {
       .returning({ id: agents.id });
     if (deleted.length === 0) throw new BridgeError("not_found", "agent not found");
 
-    await recordEvent(deps.db, "agent.deleted", { workspaceId, agentId });
+    await appendEvent(deps.db, "agent.deleted", { workspaceId, agentId });
     return c.body(null, 204);
   });
 

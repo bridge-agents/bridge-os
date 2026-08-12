@@ -1,15 +1,15 @@
 # HANDOFF — Bridge Agent OS
 
-**Phases 0, 1 and 2 are complete. The next phase is Phase 3 — Agent Architect
-+ Runtime.**
+**Phases 0–3 are complete. The next phase is Phase 4 — Tools, MCP,
+Permissions and Approvals.**
 
 Read in this order before writing code:
 
 1. This file
 2. `PRODUCT_SPEC.md` — what Bridge is, the three deployment modes, the MVP
 3. `ARCHITECTURE.md` — system design, boundaries, data model
-4. `docs/architecture/ADR-0001..0011` — decisions and their reasons
-5. `ROADMAP.md` — Phase 3 onward with acceptance criteria
+4. `docs/architecture/ADR-0001..0012` — decisions and their reasons
+5. `ROADMAP.md` — Phase 4 onward with acceptance criteria
 
 ---
 
@@ -39,8 +39,11 @@ TypeScript modular monolith, pnpm + Turborepo:
 
 - **Control plane** `apps/api` — Hono HTTP API. Routes validate, call domain
   modules, serialize. Auth/workspace middleware is the tenant boundary.
-- **Data plane** `apps/worker` — job processing via `@bridge/queue`. Runs are
-  durable state machines in Postgres; workers are stateless.
+- **Data plane** `@bridge/runtime` — the compiler, agent loop and run
+  executor. Runs are durable state machines in Postgres, claimed with
+  `FOR UPDATE SKIP LOCKED` and heartbeated (ADR-0012); executors are stateless.
+  `apps/worker` hosts it for servers; `apps/api` hosts it in embedded mode,
+  because PGlite is single-process.
 - **Contracts** `packages/spec` — Zod schemas for the Manifest, dashboards,
   permissions, events, templates. Depends on zod only.
 - **Adapters** `packages/sdk` — Provider / Tool / Channel interfaces.
@@ -62,8 +65,8 @@ apps/api/src/
   workspaces.ts   workspace CRUD + members
   agents.ts       agent CRUD (validated manifests) + template catalog routes
   providers.ts    provider configuration (credentials via SecretStore)
-  secrets.ts      SecretStore interface + EncryptedDbSecretStore
-  events.ts       recordEvent — appends to the audit log
+  runs.ts         deploy/stop, start run, run list, run + trace, cancel, conversations
+  architect.ts    natural-language draft/edit with a validation-retry loop
   testing.ts      createTestApp/signUp/as — embedded-Postgres test harness
   *.test.ts       auth, agents, providers, isolation
 apps/worker/src/  jobs.ts (dispatch) + index.ts (queue wiring, schedules)
@@ -74,9 +77,20 @@ packages/spec/src/
   events.ts       typed event catalog + envelope
   dashboard.ts    pages → sections → widgets
   templates/      catalog as data + instantiateTemplate + blankManifest
-packages/db/src/  schema.ts, client.ts (driver selection), migrations/
+packages/db/src/  schema.ts, client.ts (driver selection), events.ts, migrations/
 packages/queue/src/  types.ts, bullmq-queue.ts, local-queue.ts
-docs/architecture/   ADR-0001..0011
+packages/providers/src/
+  anthropic.ts       official SDK adapter (no sampling params; refusal mapped through)
+  openai-compatible.ts  one adapter for OpenAI / OpenRouter / gateways / Ollama
+  pricing.ts         published prices; unknown models return undefined, never a guess
+  registry.ts        createProvider() — the only place vendors are chosen
+packages/runtime/src/
+  compiler.ts        Manifest → RuntimePlan (model roles + tool grants resolved)
+  loop.ts            the agent loop; delegation as delegate_to_<name> tools
+  executor.ts        claim/heartbeat/reclaim, tracing, cost, conversation persistence
+  resolver.ts        workspace provider credentials → adapter (execution time only)
+  secrets.ts         SecretStore interface + EncryptedDbSecretStore
+docs/architecture/   ADR-0001..0012
 ```
 
 ## 4. Stack decisions (do not relitigate without a new ADR)
@@ -94,6 +108,7 @@ docs/architecture/   ADR-0001..0011
 | Embedded PGlite for local; one schema, one migration set | 0009 |
 | `JobQueue` interface: BullMQ or in-process | 0010 |
 | `SecretStore` interface; stdlib crypto, no native deps | 0011 |
+| Runs claimed from the database, not pushed through the queue | 0012 |
 
 Zod v4 note: object defaults use `.prefault({})`, not `.default({})`.
 
@@ -114,7 +129,8 @@ Server mode: `DATABASE_URL=postgres://… REDIS_URL=redis://… pnpm dev` (run
 ## 6. Database overview
 
 Tables: `users`, `sessions`, `workspaces`, `workspace_members`, `agents`,
-`secrets`, `provider_configs`, `runs`, `events`. Every domain row carries
+`secrets`, `provider_configs`, `conversations`, `messages`, `runs`,
+`run_steps`, `events`. Every domain row carries
 `workspace_id`. `agents.manifest` is jsonb and is the source of truth;
 `sessions` stores token hashes only; `secrets` stores ciphertext plus a masked
 hint. Schema changes: edit `schema.ts` → `pnpm db:generate` → review → commit
@@ -122,23 +138,27 @@ both. Embedded installs migrate at boot; servers migrate as a deploy step.
 
 ## 7. Current implementation status
 
-Verified 2026-08-12: **117 tests passing**, typecheck 8/8 projects, Biome
+Verified 2026-08-12: **172 tests passing**, typecheck 10/10 projects, Biome
 clean, web production build, and the full product flow exercised end to end
-against a running API **with Docker stopped**: signup → workspace → connect
-provider (encrypted, masked in responses) → create agent from template →
-invalid manifests rejected with field-level issues → restart → data, sessions
-and agents all still there.
+against a running API **with Docker stopped** — signup → connect a provider →
+create an agent → deploy → run → the executor claimed it in-process, called
+the provider over real HTTP, and recorded the answer, trace, tokens and
+conversation; a second turn replayed history correctly.
 
-Working: auth (cookie + bearer, rate limited), workspaces and members, agent
-CRUD from template/manifest/blank with validation on read and write, template
-catalog, provider configuration with encrypted credentials, audit events,
-both database drivers, both queue drivers, and a web client covering all of
-it.
+Working on top of Phase 2: provider adapters (Anthropic via the official SDK;
+one OpenAI-compatible adapter for OpenAI/OpenRouter/gateways/Ollama), the
+compiler, the agent loop with subagent delegation, the durable run executor
+with heartbeats and crash recovery, deploy/stop gated on connected providers,
+runs with full step traces, cancellation, conversations with history replay,
+token and cost accounting, and the Agent Architect (draft + natural-language
+edit, both returning proposals the user accepts explicitly).
 
-**Not implemented (Phase 3+):** provider adapters (only `MockProvider`
-exists), the Agent Architect, the run state machine and agent loop, tools/MCP,
-approvals, chat, CLI, channels, dashboard renderer, desktop packaging. The
-worker's `heartbeat` job is a placeholder proving scheduling on both drivers.
+**Not implemented (Phase 4+):** real tool execution and MCP, approval flows,
+sandboxing, streaming into the UI, Bridge Chat, the CLI, channels, the
+dashboard renderer, and desktop packaging. The loop's tool-dispatch point
+consults permissions and records the attempt, then tells the model the tool is
+unavailable — Phase 4 fills exactly that seam. `waiting_approval` exists in
+the state machine but nothing enters it yet.
 
 ## 8. Architectural invariants (violating these = redesign, don't)
 
@@ -180,47 +200,60 @@ worker's `heartbeat` job is a placeholder proving scheduling on both drivers.
 - Enforce `runtime.limits` (token/spend budgets) as soon as real runs exist.
   Runaway autonomous spend is a product-killing bug.
 
-## 10. Phase 3 instructions (your next phase)
+## 10. Phase 4 instructions (your next phase)
 
-Objective: the first functional agent system. Full criteria in `ROADMAP.md`.
-Suggested order:
+Objective: agents become useful *and* controllable. Full criteria in
+`ROADMAP.md`. The seams already exist — fill them rather than restructuring.
 
-1. **Provider adapters** implementing `@bridge/sdk` `Provider`: Anthropic,
-   OpenAI, and an OpenAI-compatible adapter that covers Ollama/local
-   endpoints via `provider_configs.baseUrl`. Streaming + usage capture.
-   Resolve credentials through `SecretStore` at execution time only. Write
-   one contract test suite and run every adapter through it.
-2. **Migrations** for `conversations`, `messages`, `run_steps`, and working
-   memory. Keep `runs` as the state machine record.
-3. **Compiler**: Manifest → runtime plan (resolve model roles per agent, tool
-   grants, limits). Golden tests, and surface validation errors the same way
-   agent routes already do.
-4. **Runtime loop** in the worker: `queued → running → waiting_approval →
-   succeeded | failed | cancelled`, checkpointed in Postgres, with retries,
-   timeouts from `runtime.limits`, cancellation, and subagent delegation per
-   `canDelegateTo`. Emit `run.*`/`task.*` events. Enqueue via `@bridge/queue`
-   so it works on both drivers — test it with Docker stopped.
-5. **Agent Architect**: conversational create/customise that emits Manifest
-   diffs for user approval, constrained by the Zod schema with validation
-   retries. It edits the same manifests the API already stores.
-6. **Lifecycle API**: deploy/start/stop/restart, run history, per-run token
-   and cost capture from provider usage.
+1. **Tool registry.** Implement `BridgeTool` (`@bridge/sdk`) instances for the
+   native tools the templates already reference (`web-search`, `filesystem`,
+   `http`, `shell`). Register them by name so `ToolGrant.kind: "native"`
+   resolves. Put the registry in `@bridge/runtime` next to the compiler and
+   have `compile()` fail on a grant with no implementation.
+2. **Wire the dispatch point.** In `packages/runtime/src/loop.ts`, the branch
+   after the `delegate_to_` check currently records the attempt and tells the
+   model the tool is unavailable. Replace that with: evaluate the permission,
+   `allow` → execute and return the result; `deny` → return the refusal it
+   already returns; `ask` → persist a pending approval, set the run to
+   `waiting_approval`, and return without finishing the loop.
+3. **Approvals.** New table + endpoints (list pending, approve, deny with a
+   reason) and an `approval.requested`/`approved`/`denied` event trail. The
+   executor resumes a `waiting_approval` run when a decision lands — reuse the
+   claim query with that status.
+4. **MCP client** (stdio + HTTP) exposed as ordinary `BridgeTool`s through one
+   generic adapter, so MCP is not a parallel concept.
+5. **Tool execution records** on `run_steps` (`executed: true`, duration,
+   result summary) — the trace UI already renders `data` verbatim.
+6. **Sandbox foundations** honouring `runtime.sandbox` network/filesystem
+   levels for code execution.
+7. **Web**: an approvals queue and per-tool grant editing.
 
-Definition of done: a user creates an agent, deploys it, sends a task,
-watches it run to completion, and stops it — on a laptop with no Docker.
+Definition of done: an agent with read access cannot write; dangerous actions
+pause the run and wait for a human; every tool call is recorded and visible;
+and it all still works with no Docker running.
 
 ## 11. Remaining roadmap
 
-Phase 3 Architect + runtime → 4 tools/MCP/permissions/approvals → 5
-chat/CLI/channels → 6 dashboards → **7 desktop app + local runtime packaging
-(the consumer installer, keychain secrets, background operation) + mobile** →
-8 automation/always-on → 9 observability → 10 optimizer → 11 Cloud → 12
-hardening. Details in `ROADMAP.md`.
+Phase 4 tools/MCP/permissions/approvals → 5 chat/CLI/channels → 6 dashboards
+→ **7 desktop app + local runtime packaging (the consumer installer, keychain
+secrets, background operation) + mobile** → 8 automation/always-on → 9
+observability → 10 optimizer → 11 Cloud → 12 hardening. Details in
+`ROADMAP.md`.
 
 ## 12. Unresolved issues / deliberate deferrals
 
 - Event `data` payloads are open records; define per-type payload schemas as
   each emitter lands.
+- Streaming: adapters implement `stream()` for text only (no tool-call
+  deltas); the loop uses `complete()` and the web client polls. Phase 5 wires
+  SSE end to end and will want tool-call streaming then.
+- Long-term memory and knowledge are spec-only; only conversation history is
+  implemented. `memory.longTerm`/`knowledge` flags are carried but unused.
+- Model pricing is a hand-maintained snapshot in `@bridge/providers`; unknown
+  models record tokens with a null cost rather than a wrong one.
+- The architect picks a default model per provider and retries up to three
+  times on validation errors; there is no diff UI yet, just current-vs-proposed.
+- Run pickup latency is bounded by the executor poll interval (1s).
 - Email invitations need an outbound mail path (Cloud); Phase 2 only adds
   existing accounts to a workspace.
 - API tokens are currently the same records as sessions; split them when the

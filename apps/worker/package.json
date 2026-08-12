@@ -14,7 +14,8 @@
     "@bridge/db": "workspace:*",
     "@bridge/spec": "workspace:*",
     "zod": "^4.0.0",
-    "@bridge/queue": "workspace:*"
+    "@bridge/queue": "workspace:*",
+    "@bridge/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

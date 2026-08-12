@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   index,
   integer,
   jsonb,
@@ -83,6 +84,46 @@ export const agents = pgTable(
   (t) => [unique().on(t.workspaceId, t.slug), index("agents_workspace_idx").on(t.workspaceId)],
 );
 
+/** A thread of messages with an agent. Runs attach to one. */
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    title: text("title"),
+    createdAt,
+  },
+  (t) => [index("conversations_workspace_agent_idx").on(t.workspaceId, t.agentId)],
+);
+
+/** Conversation history — the durable record the runtime replays into a model. */
+export const messages = pgTable(
+  "messages",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    runId: text("run_id"),
+    role: text("role").notNull(), // system | user | assistant | tool
+    content: text("content").notNull().default(""),
+    /** Which agent in the manifest produced this, for multi-agent transcripts. */
+    agentName: text("agent_name"),
+    toolCalls: jsonb("tool_calls"),
+    toolCallId: text("tool_call_id"),
+    createdAt,
+  },
+  (t) => [index("messages_conversation_idx").on(t.conversationId, t.createdAt)],
+);
+
 export const runs = pgTable(
   "runs",
   {
@@ -93,12 +134,23 @@ export const runs = pgTable(
     agentId: text("agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id").references(() => conversations.id, {
+      onDelete: "set null",
+    }),
     // queued | running | waiting_approval | succeeded | failed | cancelled
     status: text("status").notNull().default("queued"),
     trigger: text("trigger").notNull().default("manual"), // manual | schedule | event | channel
     input: jsonb("input"),
     output: jsonb("output"),
     error: text("error"),
+    /** Set by the API; the worker checks it at every step boundary. */
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    attempt: integer("attempt").notNull().default(0),
+    /**
+     * Refreshed while a worker holds the run. A stale heartbeat is how a
+     * crashed worker's run gets reclaimed instead of hanging forever.
+     */
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
     inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
     outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
     costUsd: numeric("cost_usd", { precision: 12, scale: 6 }),
@@ -106,7 +158,33 @@ export const runs = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
-  (t) => [index("runs_workspace_agent_idx").on(t.workspaceId, t.agentId)],
+  (t) => [
+    index("runs_workspace_agent_idx").on(t.workspaceId, t.agentId),
+    index("runs_status_idx").on(t.status),
+  ],
+);
+
+/** Ordered trace of everything a run did — the observability spine. */
+export const runSteps = pgTable(
+  "run_steps",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    // model_call | tool_call | delegation | error
+    type: text("type").notNull(),
+    agentName: text("agent_name"),
+    data: jsonb("data").notNull().default({}),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    createdAt,
+  },
+  (t) => [unique().on(t.runId, t.seq)],
 );
 
 /**

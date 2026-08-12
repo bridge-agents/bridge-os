@@ -1,11 +1,11 @@
 import { BridgeError, id } from "@bridge/core";
 import { providerConfigs, secrets } from "@bridge/db";
+import { EncryptedDbSecretStore } from "@bridge/runtime";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth, requireRole, requireWorkspace } from "./auth.js";
 import { type AppDeps, type AppEnv, parseBody } from "./http.js";
-import { EncryptedDbSecretStore } from "./secrets.js";
 
 /**
  * Providers a workspace can connect. Adding one here does not implement it —

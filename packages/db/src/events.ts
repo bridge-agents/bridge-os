@@ -1,11 +1,13 @@
-import { type Db, events } from "@bridge/db";
 import { createEvent, type EventType } from "@bridge/spec";
+import type { Db } from "./client.js";
+import { events } from "./schema.js";
 
 /**
  * Append to the audit/event log. Every significant action records one; the
- * same rows later feed realtime UI, automations and observability.
+ * same rows later feed realtime UI, automations and observability. Lives here
+ * so the control plane and the runtime write events the same way.
  */
-export async function recordEvent(
+export async function appendEvent(
   db: Db,
   type: EventType,
   fields: {

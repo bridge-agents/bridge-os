@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { type AgentSummary, api, BridgeApiError, type TemplateSummary } from "../api.js";
+import {
+  type AgentSummary,
+  api,
+  BridgeApiError,
+  type Manifest,
+  type TemplateSummary,
+} from "../api.js";
 import { useWorkspaceId } from "../session.jsx";
 import { Button, Card, EmptyState, ErrorText, Field, Input, Spinner } from "../ui.jsx";
 
@@ -10,6 +16,8 @@ export function Agents() {
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [proposal, setProposal] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -26,7 +34,7 @@ export function Agents() {
     void load();
   }, [load]);
 
-  const create = async (body: { templateId?: string; name?: string }) => {
+  const create = async (body: { templateId?: string; name?: string; manifest?: unknown }) => {
     setBusy(true);
     setError(null);
     try {
@@ -73,7 +81,69 @@ export function Agents() {
               Start blank
             </Button>
           </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="flex-1">
+              <Field
+                label="Or describe what you want"
+                hint="Bridge designs the agent, then you review it before it is created."
+              >
+                {(id) => (
+                  <Input
+                    id={id}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Watch my inbox and draft replies, but never send without asking"
+                  />
+                )}
+              </Field>
+            </div>
+            <Button
+              variant="ghost"
+              disabled={busy || description.trim().length === 0}
+              onClick={() =>
+                void (async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    const { manifest } = await api.draftAgent(
+                      workspaceId,
+                      description.trim(),
+                      name.trim() || undefined,
+                    );
+                    setProposal(manifest);
+                  } catch (err) {
+                    setError(
+                      err instanceof BridgeApiError ? err.error.message : "Could not design that.",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                })()
+              }
+            >
+              {busy ? "Designing…" : "Design it"}
+            </Button>
+          </div>
           <ErrorText>{error}</ErrorText>
+
+          {proposal && (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-text-muted">
+                Proposed design — {proposal.agents.length} agent
+                {proposal.agents.length === 1 ? "" : "s"}
+              </p>
+              <pre className="max-h-72 overflow-auto rounded-[var(--radius-sm)] border border-border bg-bg p-3 font-mono text-[11px]">
+                {JSON.stringify(proposal, null, 2)}
+              </pre>
+              <div className="flex gap-2">
+                <Button onClick={() => create({ manifest: proposal })}>Create this agent</Button>
+                <Button variant="ghost" onClick={() => setProposal(null)}>
+                  Discard
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {templates.map((template) => (

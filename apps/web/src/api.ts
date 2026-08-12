@@ -77,6 +77,31 @@ export interface Manifest {
   [key: string]: unknown;
 }
 
+export interface RunSummary {
+  id: string;
+  status: string;
+  trigger: string;
+  conversationId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: string | null;
+  queuedAt: string;
+  finishedAt: string | null;
+}
+export interface RunStep {
+  id: string;
+  seq: number;
+  type: string;
+  agentName: string | null;
+  data: Record<string, unknown>;
+  inputTokens: number;
+  outputTokens: number;
+}
+export interface RunDetail {
+  run: RunSummary & { output: { content?: string } | null; error: string | null };
+  steps: RunStep[];
+}
+
 export const api = {
   health: () => get<{ status: string; version: string; checks: { db: string } }>("/health"),
 
@@ -118,6 +143,43 @@ export const api = {
     ),
   deleteAgent: (workspaceId: string, agentId: string) =>
     send<void>("DELETE", `/v1/workspaces/${workspaceId}/agents/${agentId}`),
+
+  deployAgent: (workspaceId: string, agentId: string) =>
+    send<{ agent: { id: string; status: string } }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/agents/${agentId}/deploy`,
+    ),
+  stopAgent: (workspaceId: string, agentId: string) =>
+    send<{ agent: { id: string; status: string } }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/agents/${agentId}/stop`,
+    ),
+
+  startRun: (workspaceId: string, agentId: string, input: string, conversationId?: string) =>
+    send<{ run: { id: string; status: string; conversationId: string } }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/agents/${agentId}/runs`,
+      { input, conversationId },
+    ),
+  runs: (workspaceId: string, agentId: string) =>
+    get<{ runs: RunSummary[] }>(`/v1/workspaces/${workspaceId}/agents/${agentId}/runs`),
+  run: (workspaceId: string, runId: string) =>
+    get<RunDetail>(`/v1/workspaces/${workspaceId}/runs/${runId}`),
+  cancelRun: (workspaceId: string, runId: string) =>
+    send<unknown>("POST", `/v1/workspaces/${workspaceId}/runs/${runId}/cancel`),
+
+  draftAgent: (workspaceId: string, description: string, name?: string) =>
+    send<{ manifest: Manifest; attempts: number }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/architect/draft`,
+      { description, name },
+    ),
+  editAgent: (workspaceId: string, agentId: string, instruction: string) =>
+    send<{ manifest: Manifest; attempts: number }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/architect/agents/${agentId}/edit`,
+      { instruction },
+    ),
 
   providers: (workspaceId: string) =>
     get<{ providers: ProviderConfig[] }>(`/v1/workspaces/${workspaceId}/providers`),

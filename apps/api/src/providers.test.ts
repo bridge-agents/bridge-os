@@ -1,6 +1,6 @@
 import { generateSecretKey, parseSecretKey } from "@bridge/core";
+import { EncryptedDbSecretStore } from "@bridge/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EncryptedDbSecretStore } from "./secrets.js";
 import { as, createTestApp, signUp, type TestApp, type TestUser } from "./testing.js";
 
 let ctx: TestApp;

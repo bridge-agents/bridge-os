@@ -3,12 +3,14 @@ import { pingDb } from "@bridge/db";
 import { SPEC_VERSION, safeParseManifest } from "@bridge/spec";
 import { Hono } from "hono";
 import { agentRoutes, templateRoutes } from "./agents.js";
+import { architectRoutes } from "./architect.js";
 import { authRoutes } from "./auth.js";
 import type { AppDeps, AppEnv } from "./http.js";
 import { providerRoutes } from "./providers.js";
+import { runRoutes } from "./runs.js";
 import { workspaceRoutes } from "./workspaces.js";
 
-export const API_VERSION = "0.2.0";
+export const API_VERSION = "0.3.0";
 
 /**
  * Route layer only: validate, call domain modules, serialize (ADR-0005).
@@ -78,6 +80,9 @@ export function buildApp(deps: AppDeps) {
   app.route("/v1/workspaces", workspaceRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/agents", agentRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
+  app.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));
+  // Run, conversation and lifecycle routes share one workspace-scoped mount.
+  app.route("/v1/workspaces/:workspaceId", runRoutes(deps));
 
   app.notFound((c) =>
     c.json({ error: { code: "not_found", message: `no route for ${c.req.path}` } }, 404),

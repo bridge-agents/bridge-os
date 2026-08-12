@@ -41,12 +41,19 @@ export interface TokenUsage {
   outputTokens: number;
 }
 
-export type StopReason = "end" | "tool_use" | "max_tokens";
+/**
+ * `refusal` is a normal, successful outcome on current Anthropic models — the
+ * safety classifiers declined and the content is empty or partial. Callers
+ * must branch on the stop reason before reading message content.
+ */
+export type StopReason = "end" | "tool_use" | "max_tokens" | "refusal";
 
 export interface CompletionResult {
   message: ChatMessage;
   usage: TokenUsage;
   stopReason: StopReason;
+  /** Provider-native model id that actually served the response. */
+  model?: string;
 }
 
 export interface CompletionChunk {

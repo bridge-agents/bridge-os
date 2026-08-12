@@ -1,6 +1,7 @@
 # Bridge Agent OS — Architecture
 
-Status: Phase 0/1 (foundation). Decisions recorded in `docs/architecture/ADR-*.md`.
+Status: Phases 0–3 complete (foundation, accounts, agent runtime). Decisions
+recorded in `docs/architecture/ADR-*.md`.
 
 ## 1. System Overview
 
@@ -60,16 +61,18 @@ Boundaries (explicit in the repository):
 | Boundary | Lives in | Responsibility |
 |---|---|---|
 | Control plane | `apps/api` | users, workspaces, agents, manifests, templates, integrations, secret references, deployments, permissions, dashboards, configuration |
-| Runtime / data plane | `apps/worker` | model execution, agent loops, tasks, tools, MCP, memory, queues, schedules, channels, sandboxes |
-| Bridge Compiler | `apps/api` (module) + `@bridge/spec` | intent/template/config → validated Manifest → runtime config |
+| Runtime / data plane | `@bridge/runtime`, hosted by `apps/worker` or by `apps/api` in embedded mode | model execution, agent loops, runs, tools, MCP, memory, schedules, channels, sandboxes |
+| Bridge Compiler | `@bridge/runtime` (`compile`) + `@bridge/spec` | intent/template/config → validated Manifest → runtime plan |
 | Client layer | `apps/web`, later CLI/desktop/mobile/channels | thin clients of the API; zero domain logic |
 | Observability | typed events (`@bridge/spec/events`) + `events` table + structured logs | runs, traces, tasks, tool calls, tokens, costs, failures, approvals |
 | Contracts | `@bridge/spec`, `@bridge/sdk` | the only vocabulary shared across planes |
 
-The API and worker are **separate processes sharing packages, one Postgres,
-and one Redis** — a modular monolith. No microservices, no Kubernetes in the
-MVP (ADR-0001). Nothing prevents splitting later because planes only
-communicate through the DB, queues, and typed events.
+The API and worker share packages and one Postgres — a modular monolith. On a
+server they are separate processes (with Redis for scheduled jobs); on the
+desktop the API hosts the runtime in-process, because the embedded database is
+single-process (ADR-0009, ADR-0012). No microservices, no Kubernetes in the
+MVP (ADR-0001). Nothing prevents splitting later because the planes only
+communicate through the database and typed events.
 
 ## 2. Repository Layout
 
@@ -84,6 +87,8 @@ packages/
   core/         @bridge/core   — ids, errors, env, logging, crypto (ADR-0011)
   db/           @bridge/db     — Drizzle schema, migrations, server + embedded drivers (ADR-0003, ADR-0009)
   queue/        @bridge/queue  — JobQueue interface, BullMQ + in-process drivers (ADR-0010)
+  providers/    @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing, registry
+  runtime/      @bridge/runtime   — compiler, agent loop, run executor, secrets, provider resolution (ADR-0012)
   ui/           @bridge/ui     — design tokens (CSS variables), brand assets, base styles
 docs/
   architecture/ ADR-*.md
@@ -94,8 +99,10 @@ docker-compose.yml   Local Postgres + Redis
 Dependency rule (enforced by review, later by lint):
 
 ```text
-apps/*  →  @bridge/{spec,sdk,core,db,queue,ui}
-@bridge/db → @bridge/core
+apps/*  →  @bridge/{spec,sdk,core,db,queue,providers,runtime,ui}
+@bridge/runtime → @bridge/{core,db,providers,sdk,spec}
+@bridge/providers → @bridge/{sdk,spec}
+@bridge/db → @bridge/{core,spec}
 @bridge/sdk → @bridge/spec
 @bridge/queue → (bullmq only; no Bridge deps)
 @bridge/spec → zod only        (pure contracts, no runtime deps)
@@ -254,15 +261,32 @@ with their phases as migrations.
 - **Limits**: token budget / spend / concurrency fields exist in the spec and
   `runs` records usage, so enforcement is additive.
 
-## 11. Runtime Model (for Phases 3+8)
+## 11. Runtime Model
 
-Runs are queued jobs (BullMQ) executed by workers, never in-request. A run is
-a state machine: `queued → running → (waiting_approval ↔ running) →
-succeeded | failed | cancelled`, checkpointed in Postgres so workers can
-crash and resume. Schedules use BullMQ repeatable jobs; triggers subscribe to
-events. Long-running agents = durable state + queue, not long-lived
-processes — this is what lets the UI close while agents keep working, and
-what lets Cloud scale workers horizontally later.
+A run is a state machine persisted in Postgres: `queued → running →
+(waiting_approval ↔ running) → succeeded | failed | cancelled`. Workers
+**claim runs from the database** with `FOR UPDATE SKIP LOCKED` rather than
+receiving a queue push (ADR-0012), refresh a heartbeat while working, and a
+run whose heartbeat goes stale is requeued — which is how a crashed worker is
+recovered. Cancellation is a column checked at step boundaries. Schedules and
+event triggers keep using the queue drivers (Phase 8).
+
+Inside a run, the **agent loop** (`@bridge/runtime`) calls the model,
+dispatches what it asks for, feeds results back, and repeats until it answers
+or a limit stops it. Subagents are exposed to the model as
+`delegate_to_<name>` tools, so delegation reuses the tool-call path instead of
+a parallel mechanism, and each subagent starts with a clean context containing
+only its task. Iteration count, delegation depth, the `runtime.limits`
+deadline and cancellation all bound the loop. Every model call, tool attempt
+and delegation is written to `run_steps` as it happens, so a crash leaves a
+partial trace rather than nothing.
+
+**Process topology follows the database driver.** With an embedded database
+the API hosts the executor in-process (PGlite is single-process — this is the
+desktop shape); with a server database `apps/worker` runs it separately and
+scales horizontally. Long-running agents are durable state plus a poller, not
+long-lived processes — which is what lets the UI close while agents keep
+working.
 
 ## 12. Local vs Self-Host vs Cloud
 
