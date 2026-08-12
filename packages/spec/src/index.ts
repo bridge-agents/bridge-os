@@ -36,7 +36,10 @@ export {
   ToolGrantSchema,
 } from "./manifest.js";
 export {
+  decidePermission,
+  decideToolPermission,
   evaluatePermission,
+  type PermissionDecision,
   type PermissionEffect,
   PermissionEffectSchema,
   type PermissionPolicy,

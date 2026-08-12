@@ -2,6 +2,7 @@ import { BridgeError, id, type Logger } from "@bridge/core";
 import {
   agents,
   appendEvent,
+  approvals,
   conversations,
   type Db,
   messages as messagesTable,
@@ -9,11 +10,14 @@ import {
   runs,
 } from "@bridge/db";
 import { estimateCost } from "@bridge/providers";
-import type { ChatMessage, Provider } from "@bridge/sdk";
+import type { ChatMessage, Provider, TokenUsage } from "@bridge/sdk";
 import { parseManifest } from "@bridge/spec";
-import { and, asc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { compile } from "./compiler.js";
-import { type RunStepRecord, runAgentLoop } from "./loop.js";
+import type { ApprovalDecision, ApprovalRequest, LoopCheckpoint, RunStepRecord } from "./loop.js";
+import { runAgentLoop } from "./loop.js";
+import type { WebSearchConfig } from "./tools/native.js";
+import { createRegistry } from "./tools/registry.js";
 
 /**
  * Executes runs claimed from the database.
@@ -32,6 +36,10 @@ export interface ExecutorDeps {
   staleAfterMs?: number;
   heartbeatMs?: number;
   maxAttempts?: number;
+  /** Where per-agent sandbox workspaces live. */
+  dataDir?: string;
+  /** Optional search backend for the web-search tool. */
+  search?: WebSearchConfig;
 }
 
 interface ClaimedRun {
@@ -41,12 +49,15 @@ interface ClaimedRun {
   conversationId: string | null;
   input: unknown;
   attempt: number;
+  checkpoint: unknown;
+  costUsd: string | null;
 }
 
 export class RunExecutor {
   private readonly staleAfterMs: number;
   private readonly heartbeatMs: number;
   private readonly maxAttempts: number;
+  private readonly dataDir: string;
   private timer?: NodeJS.Timeout;
   private stopped = false;
 
@@ -54,6 +65,7 @@ export class RunExecutor {
     this.staleAfterMs = deps.staleAfterMs ?? 60_000;
     this.heartbeatMs = deps.heartbeatMs ?? 15_000;
     this.maxAttempts = deps.maxAttempts ?? 3;
+    this.dataDir = deps.dataDir ?? "./.bridge/agents";
   }
 
   /**
@@ -68,6 +80,8 @@ export class RunExecutor {
       conversation_id: string | null;
       input: unknown;
       attempt: number;
+      checkpoint: unknown;
+      cost_usd: string | null;
     }>(sql`
       update runs set
         status = 'running',
@@ -81,7 +95,7 @@ export class RunExecutor {
         limit 1
         for update skip locked
       )
-      returning id, workspace_id, agent_id, conversation_id, input, attempt
+      returning id, workspace_id, agent_id, conversation_id, input, attempt, checkpoint, cost_usd
     `);
 
     const rows = Array.isArray(claimed) ? claimed : ((claimed as { rows?: unknown[] }).rows ?? []);
@@ -93,6 +107,8 @@ export class RunExecutor {
           conversation_id: string | null;
           input: unknown;
           attempt: number;
+          checkpoint: unknown;
+          cost_usd: string | null;
         }
       | undefined;
     if (!row) return undefined;
@@ -104,6 +120,8 @@ export class RunExecutor {
       conversationId: row.conversation_id,
       input: row.input,
       attempt: Number(row.attempt),
+      checkpoint: row.checkpoint,
+      costUsd: row.cost_usd,
     };
   }
 
@@ -174,16 +192,34 @@ export class RunExecutor {
           : "";
       const conversation: ChatMessage[] = [...history, { role: "user", content: input }];
 
-      let seq = 0;
-      let costUsd = 0;
-      let hasPricedStep = false;
+      // Steps keep numbering across a pause so a resumed run has one ordered trace.
+      let seq = await this.nextStepSeq(run.id);
+      let costUsd = Number(run.costUsd ?? 0);
+      let hasPricedStep = costUsd > 0;
+
+      const registry = await createRegistry(plan.tools, {
+        workspaceId: run.workspaceId,
+        agentId: run.agentId,
+        sandbox: plan.sandbox,
+        dataDir: this.dataDir,
+        search: this.deps.search,
+      });
+
+      const resume = run.checkpoint ? await this.resumeState(run) : undefined;
 
       const result = await runAgentLoop({
         plan,
-        agentName: plan.entryAgent,
-        messages: conversation,
+        ...(resume ? { resume } : { messages: conversation }),
         deps: {
           getProvider: (providerId) => this.deps.getProvider(run.workspaceId, providerId),
+          toolsFor: (agentName) =>
+            registry.forGrants((plan.agents[agentName]?.tools ?? []).map((grant) => grant.name)),
+          context: {
+            workspaceId: run.workspaceId,
+            agentId: run.agentId,
+            runId: run.id,
+          },
+          log: (message, data) => logger.debug({ runId: run.id, ...data }, message),
           isCancelled: async () => {
             const [current] = await db
               .select({ cancelRequested: runs.cancelRequested })
@@ -215,6 +251,16 @@ export class RunExecutor {
         },
       });
 
+      // Paused for a human: persist exactly where we stopped and stand down.
+      if (result.status === "waiting_approval") {
+        await this.pauseForApproval(run, result.checkpoint, result.request, {
+          costUsd: hasPricedStep ? costUsd : undefined,
+          usage: result.usage,
+        });
+        logger.info({ runId: run.id, tool: result.request.toolName }, "run awaiting approval");
+        return;
+      }
+
       if (run.conversationId) {
         await this.persistTurn(run, input, result.content);
       }
@@ -228,6 +274,7 @@ export class RunExecutor {
           inputTokens: result.usage.inputTokens,
           outputTokens: result.usage.outputTokens,
           costUsd: hasPricedStep ? costUsd.toFixed(6) : null,
+          checkpoint: null,
           finishedAt: new Date(),
         })
         .where(eq(runs.id, run.id));
@@ -265,6 +312,85 @@ export class RunExecutor {
     } finally {
       clearInterval(heartbeat);
     }
+  }
+
+  /** Continue numbering steps after a pause instead of colliding at zero. */
+  private async nextStepSeq(runId: string): Promise<number> {
+    const [row] = await this.deps.db
+      .select({ max: sql<number | null>`max(${runSteps.seq})` })
+      .from(runSteps)
+      .where(eq(runSteps.runId, runId));
+    return row?.max === null || row?.max === undefined ? 0 : Number(row.max) + 1;
+  }
+
+  /**
+   * Park the run: store the loop stack, raise an approval for a human, and
+   * release the worker. Nothing is held in memory across the wait.
+   */
+  private async pauseForApproval(
+    run: ClaimedRun,
+    checkpoint: LoopCheckpoint,
+    request: ApprovalRequest,
+    totals: { costUsd?: number; usage: TokenUsage },
+  ): Promise<void> {
+    const approvalId = id("apr");
+    await this.deps.db.insert(approvals).values({
+      id: approvalId,
+      workspaceId: run.workspaceId,
+      runId: run.id,
+      agentId: run.agentId,
+      agentName: request.agentName,
+      toolName: request.toolName,
+      action: request.action,
+      input: request.input,
+      status: "pending",
+    });
+
+    await this.deps.db
+      .update(runs)
+      .set({
+        status: "waiting_approval",
+        checkpoint,
+        inputTokens: totals.usage.inputTokens,
+        outputTokens: totals.usage.outputTokens,
+        costUsd: totals.costUsd === undefined ? null : totals.costUsd.toFixed(6),
+        heartbeatAt: null,
+      })
+      .where(eq(runs.id, run.id));
+
+    await appendEvent(this.deps.db, "approval.requested", {
+      workspaceId: run.workspaceId,
+      agentId: run.agentId,
+      runId: run.id,
+      data: {
+        approvalId,
+        tool: request.toolName,
+        action: request.action,
+        agent: request.agentName,
+      },
+    });
+  }
+
+  /** Rebuild the paused loop plus the decision that released it. */
+  private async resumeState(
+    run: ClaimedRun,
+  ): Promise<{ checkpoint: LoopCheckpoint; decision: ApprovalDecision } | undefined> {
+    const [decided] = await this.deps.db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.runId, run.id))
+      .orderBy(desc(approvals.createdAt))
+      .limit(1);
+
+    // A checkpoint with no decision yet means the run was requeued by a
+    // reclaim; treat it as denied rather than executing without consent.
+    return {
+      checkpoint: run.checkpoint as LoopCheckpoint,
+      decision: {
+        approved: decided?.status === "approved",
+        reason: decided?.reason ?? undefined,
+      },
+    };
   }
 
   private async loadHistory(conversationId: string): Promise<ChatMessage[]> {

@@ -147,6 +147,11 @@ export const runs = pgTable(
     cancelRequested: boolean("cancel_requested").notNull().default(false),
     attempt: integer("attempt").notNull().default(0),
     /**
+     * Serialized agent-loop stack, written when a run pauses for approval so
+     * it can be resumed exactly where it stopped rather than replayed.
+     */
+    checkpoint: jsonb("checkpoint"),
+    /**
      * Refreshed while a worker holds the run. A stale heartbeat is how a
      * crashed worker's run gets reclaimed instead of hanging forever.
      */
@@ -185,6 +190,39 @@ export const runSteps = pgTable(
     createdAt,
   },
   (t) => [unique().on(t.runId, t.seq)],
+);
+
+/**
+ * A tool call a human has to decide on. Created when the permission policy
+ * says `ask`; the run parks in `waiting_approval` until it is resolved.
+ */
+export const approvals = pgTable(
+  "approvals",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => agents.id, { onDelete: "cascade" }),
+    /** Which agent in the manifest asked, for multi-agent runs. */
+    agentName: text("agent_name"),
+    toolName: text("tool_name").notNull(),
+    action: text("action").notNull(),
+    input: jsonb("input").notNull().default({}),
+    status: text("status").notNull().default("pending"), // pending | approved | denied
+    /** Shown to the model when denied, so it can adapt rather than just fail. */
+    reason: text("reason"),
+    decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt,
+  },
+  (t) => [
+    index("approvals_workspace_status_idx").on(t.workspaceId, t.status),
+    index("approvals_run_idx").on(t.runId),
+  ],
 );
 
 /**

@@ -1,15 +1,15 @@
 # HANDOFF — Bridge Agent OS
 
-**Phases 0–3 are complete. The next phase is Phase 4 — Tools, MCP,
-Permissions and Approvals.**
+**Phases 0–4 are complete. The next phase is Phase 5 — Chat, Terminal and
+Channels.**
 
 Read in this order before writing code:
 
 1. This file
 2. `PRODUCT_SPEC.md` — what Bridge is, the three deployment modes, the MVP
 3. `ARCHITECTURE.md` — system design, boundaries, data model
-4. `docs/architecture/ADR-0001..0012` — decisions and their reasons
-5. `ROADMAP.md` — Phase 4 onward with acceptance criteria
+4. `docs/architecture/ADR-0001..0013` — decisions and their reasons
+5. `ROADMAP.md` — Phase 5 onward with acceptance criteria
 
 ---
 
@@ -66,6 +66,7 @@ apps/api/src/
   agents.ts       agent CRUD (validated manifests) + template catalog routes
   providers.ts    provider configuration (credentials via SecretStore)
   runs.ts         deploy/stop, start run, run list, run + trace, cancel, conversations
+  approvals.ts    pending queue, approve/deny — requeues the paused run
   architect.ts    natural-language draft/edit with a validation-retry loop
   testing.ts      createTestApp/signUp/as — embedded-Postgres test harness
   *.test.ts       auth, agents, providers, isolation
@@ -86,11 +87,15 @@ packages/providers/src/
   registry.ts        createProvider() — the only place vendors are chosen
 packages/runtime/src/
   compiler.ts        Manifest → RuntimePlan (model roles + tool grants resolved)
-  loop.ts            the agent loop; delegation as delegate_to_<name> tools
-  executor.ts        claim/heartbeat/reclaim, tracing, cost, conversation persistence
+  loop.ts            frame-stack agent loop: tool dispatch, delegation, approval suspend/resume
+  executor.ts        claim/heartbeat/reclaim, checkpointing, tracing, cost, conversations
   resolver.ts        workspace provider credentials → adapter (execution time only)
   secrets.ts         SecretStore interface + EncryptedDbSecretStore
-docs/architecture/   ADR-0001..0012
+  tools/sandbox.ts   path confinement + network policy (the security boundary)
+  tools/native.ts    http, filesystem, shell, web-search
+  tools/mcp.ts       JSON-RPC client (stdio + HTTP) → Bridge tools
+  tools/registry.ts  grants → implementations; assertGrantsSupported
+docs/architecture/   ADR-0001..0013
 ```
 
 ## 4. Stack decisions (do not relitigate without a new ADR)
@@ -109,6 +114,7 @@ docs/architecture/   ADR-0001..0012
 | `JobQueue` interface: BullMQ or in-process | 0010 |
 | `SecretStore` interface; stdlib crypto, no native deps | 0011 |
 | Runs claimed from the database, not pushed through the queue | 0012 |
+| Agent loop is a serializable frame stack; approvals suspend a run | 0013 |
 
 Zod v4 note: object defaults use `.prefault({})`, not `.default({})`.
 
@@ -130,7 +136,8 @@ Server mode: `DATABASE_URL=postgres://… REDIS_URL=redis://… pnpm dev` (run
 
 Tables: `users`, `sessions`, `workspaces`, `workspace_members`, `agents`,
 `secrets`, `provider_configs`, `conversations`, `messages`, `runs`,
-`run_steps`, `events`. Every domain row carries
+`run_steps`, `approvals`, `events`. `runs.checkpoint` holds a paused agent
+loop's frame stack (ADR-0013). Every domain row carries
 `workspace_id`. `agents.manifest` is jsonb and is the source of truth;
 `sessions` stores token hashes only; `secrets` stores ciphertext plus a masked
 hint. Schema changes: edit `schema.ts` → `pnpm db:generate` → review → commit
@@ -138,27 +145,24 @@ both. Embedded installs migrate at boot; servers migrate as a deploy step.
 
 ## 7. Current implementation status
 
-Verified 2026-08-12: **172 tests passing**, typecheck 10/10 projects, Biome
+Verified 2026-08-12: **220 tests passing**, typecheck 10/10 projects, Biome
 clean, web production build, and the full product flow exercised end to end
-against a running API **with Docker stopped** — signup → connect a provider →
-create an agent → deploy → run → the executor claimed it in-process, called
-the provider over real HTTP, and recorded the answer, trace, tokens and
-conversation; a second turn replayed history correctly.
+against a running API **with Docker stopped** — an agent asked to write a
+file, the run paused in `waiting_approval`, a human approved through the API,
+the run resumed, the tool executed, and the file appeared inside the agent's
+sandbox with one ordered trace across the pause.
 
-Working on top of Phase 2: provider adapters (Anthropic via the official SDK;
-one OpenAI-compatible adapter for OpenAI/OpenRouter/gateways/Ollama), the
-compiler, the agent loop with subagent delegation, the durable run executor
-with heartbeats and crash recovery, deploy/stop gated on connected providers,
-runs with full step traces, cancellation, conversations with history replay,
-token and cost accounting, and the Agent Architect (draft + natural-language
-edit, both returning proposals the user accepts explicitly).
+Working on top of Phase 3: native tools (`http`, `filesystem`, `shell`,
+`web-search`) bound to an enforced sandbox, an MCP client over stdio and HTTP,
+a tool registry resolving grants at deploy time, the permission engine wired
+into every dispatch (with dangerous actions requiring an explicit allow), and
+approvals — a run suspends anywhere including inside a subagent, checkpoints
+its frame stack, and resumes from the exact call once decided.
 
-**Not implemented (Phase 4+):** real tool execution and MCP, approval flows,
-sandboxing, streaming into the UI, Bridge Chat, the CLI, channels, the
-dashboard renderer, and desktop packaging. The loop's tool-dispatch point
-consults permissions and records the attempt, then tells the model the tool is
-unavailable — Phase 4 fills exactly that seam. `waiting_approval` exists in
-the state machine but nothing enters it yet.
+**Not implemented (Phase 5+):** streaming into the UI, Bridge Chat, the CLI,
+channels, the dashboard renderer, schedules/triggers, deeper observability,
+and desktop packaging. Per-agent credential scoping and container-level
+sandbox isolation are deferred with reasons in `ROADMAP.md` Phase 4.
 
 ## 8. Architectural invariants (violating these = redesign, don't)
 
@@ -200,45 +204,37 @@ the state machine but nothing enters it yet.
 - Enforce `runtime.limits` (token/spend budgets) as soon as real runs exist.
   Runaway autonomous spend is a product-killing bug.
 
-## 10. Phase 4 instructions (your next phase)
+## 10. Phase 5 instructions (your next phase)
 
-Objective: agents become useful *and* controllable. Full criteria in
-`ROADMAP.md`. The seams already exist — fill them rather than restructuring.
+Objective: Bridge Chat, the CLI, and the channel framework. Full criteria in
+`ROADMAP.md`.
 
-1. **Tool registry.** Implement `BridgeTool` (`@bridge/sdk`) instances for the
-   native tools the templates already reference (`web-search`, `filesystem`,
-   `http`, `shell`). Register them by name so `ToolGrant.kind: "native"`
-   resolves. Put the registry in `@bridge/runtime` next to the compiler and
-   have `compile()` fail on a grant with no implementation.
-2. **Wire the dispatch point.** In `packages/runtime/src/loop.ts`, the branch
-   after the `delegate_to_` check currently records the attempt and tells the
-   model the tool is unavailable. Replace that with: evaluate the permission,
-   `allow` → execute and return the result; `deny` → return the refusal it
-   already returns; `ask` → persist a pending approval, set the run to
-   `waiting_approval`, and return without finishing the loop.
-3. **Approvals.** New table + endpoints (list pending, approve, deny with a
-   reason) and an `approval.requested`/`approved`/`denied` event trail. The
-   executor resumes a `waiting_approval` run when a decision lands — reuse the
-   claim query with that status.
-4. **MCP client** (stdio + HTTP) exposed as ordinary `BridgeTool`s through one
-   generic adapter, so MCP is not a parallel concept.
-5. **Tool execution records** on `run_steps` (`executed: true`, duration,
-   result summary) — the trace UI already renders `data` verbatim.
-6. **Sandbox foundations** honouring `runtime.sandbox` network/filesystem
-   levels for code execution.
-7. **Web**: an approvals queue and per-tool grant editing.
+1. **Streaming.** The adapters already implement `stream()` for text. Thread it
+   through the loop (an `onDelta` in `LoopDeps`), persist deltas or forward
+   them, and expose SSE at `GET /v1/workspaces/:id/runs/:runId/stream`. Note
+   the loop calls `complete()` for tool-use turns — stream the text turns and
+   keep tool turns buffered rather than rewriting the dispatch path.
+2. **Bridge Chat** on the existing conversation endpoints: streamed messages,
+   agent switching, tool activity from `run_steps`, run status, and approval
+   cards wired to `/approvals` (the API and queue already exist).
+3. **Bridge CLI** (`apps/cli`) against the public API with bearer tokens:
+   `bridge chat`, `bridge agent list|run`, `bridge status`, `bridge logs`,
+   `bridge approvals`. It must use only documented endpoints — if the CLI
+   needs something the web app has, that is a missing public endpoint.
+4. **Channel framework**: implement `@bridge/sdk` `Channel` for Telegram and
+   Discord; inbound messages create runs, outbound comes from run output. Keep
+   channel code out of the runtime.
 
-Definition of done: an agent with read access cannot write; dangerous actions
-pause the run and wait for a human; every tool call is recorded and visible;
-and it all still works with no Docker running.
+Definition of done: a user holds a full conversation with an agent from the
+web and from the CLI, sees tool activity and approves actions inline, and a
+Telegram user can talk to a deployed agent — all with no Docker running.
 
 ## 11. Remaining roadmap
 
-Phase 4 tools/MCP/permissions/approvals → 5 chat/CLI/channels → 6 dashboards
-→ **7 desktop app + local runtime packaging (the consumer installer, keychain
-secrets, background operation) + mobile** → 8 automation/always-on → 9
-observability → 10 optimizer → 11 Cloud → 12 hardening. Details in
-`ROADMAP.md`.
+Phase 5 chat/CLI/channels → 6 dashboards → **7 desktop app + local runtime
+packaging (the consumer installer, keychain secrets, background operation) +
+mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 Cloud
+→ 12 hardening. Details in `ROADMAP.md`.
 
 ## 12. Unresolved issues / deliberate deferrals
 
@@ -249,6 +245,14 @@ observability → 10 optimizer → 11 Cloud → 12 hardening. Details in
   SSE end to end and will want tool-call streaming then.
 - Long-term memory and knowledge are spec-only; only conversation history is
   implemented. `memory.longTerm`/`knowledge` flags are carried but unused.
+- Sandboxing is process-level (path confinement, argument vectors, a minimal
+  environment, DNS-checked network policy), not container isolation. Real
+  isolation for untrusted code is Phase 12.
+- Tools take no workspace credentials yet, so there is nothing to scope
+  per-agent; MCP server credentials ride in the grant config.
+- A resumed run re-resolves the approved tool by name against the *current*
+  manifest. Editing an agent while a run is paused is safe (an unknown tool is
+  treated as denied) but the approval was granted against the old plan.
 - Model pricing is a hand-maintained snapshot in `@bridge/providers`; unknown
   models record tokens with a null cost rather than a wrong one.
 - The architect picks a default model per provider and retries up to three
@@ -289,3 +293,10 @@ observability → 10 optimizer → 11 Cloud → 12 hardening. Details in
   the choices and churn here buys no user value.
 - Do not weaken `@bridge/spec`'s zero-dependency rule or move schemas out of
   it.
+- Do not make the agent loop hold state across an approval wait, and do not
+  put anything unserializable in a loop frame — durability of a paused run
+  depends on the frame stack being plain data (ADR-0013).
+- Do not weaken the sandbox checks in `tools/sandbox.ts`: paths are resolved
+  through symlinks before the containment check, and restricted network access
+  resolves DNS rather than trusting the hostname. Both exist because the
+  obvious string-level checks are bypassable.

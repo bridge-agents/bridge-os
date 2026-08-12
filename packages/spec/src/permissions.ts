@@ -27,20 +27,53 @@ function matchesResource(pattern: string, resource: string): boolean {
   return pattern === resource;
 }
 
+export interface PermissionDecision {
+  effect: PermissionEffect;
+  /** False when no rule matched and the policy default was used. */
+  matched: boolean;
+}
+
 /**
  * Deterministic policy evaluation: ordered rules, first match wins,
  * fall through to the policy default. Every tool call in the runtime
  * must pass through this function.
+ *
+ * `matched` matters because a dangerous action should never be allowed by a
+ * blanket default — only by a rule someone wrote on purpose.
  */
+export function decidePermission(
+  policy: PermissionPolicy,
+  resource: string,
+  action: string,
+): PermissionDecision {
+  for (const rule of policy.rules) {
+    if (!matchesResource(rule.resource, resource)) continue;
+    if (rule.actions !== "*" && !rule.actions.includes(action)) continue;
+    return { effect: rule.effect, matched: true };
+  }
+  return { effect: policy.default, matched: false };
+}
+
 export function evaluatePermission(
   policy: PermissionPolicy,
   resource: string,
   action: string,
 ): PermissionEffect {
-  for (const rule of policy.rules) {
-    if (!matchesResource(rule.resource, resource)) continue;
-    if (rule.actions !== "*" && !rule.actions.includes(action)) continue;
-    return rule.effect;
-  }
-  return policy.default;
+  return decidePermission(policy, resource, action).effect;
+}
+
+/**
+ * The decision the runtime actually enforces. A destructive action that is
+ * only permitted by the policy default is downgraded to `ask`: allowing it
+ * has to be deliberate, not a side effect of a permissive default.
+ */
+export function decideToolPermission(
+  policy: PermissionPolicy,
+  toolName: string,
+  action: string,
+  isDangerous: boolean,
+): PermissionEffect {
+  const { effect, matched } = decidePermission(policy, `tool:${toolName}`, action);
+  if (isDangerous && !matched && effect === "allow") return "ask";
+  return effect;
 }

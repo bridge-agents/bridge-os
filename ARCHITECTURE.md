@@ -1,7 +1,7 @@
 # Bridge Agent OS — Architecture
 
-Status: Phases 0–3 complete (foundation, accounts, agent runtime). Decisions
-recorded in `docs/architecture/ADR-*.md`.
+Status: Phases 0–4 complete (foundation, accounts, runtime, tools and
+approvals). Decisions recorded in `docs/architecture/ADR-*.md`.
 
 ## 1. System Overview
 
@@ -79,7 +79,7 @@ communicate through the database and typed events.
 ```text
 apps/
   api/          Control plane: Hono HTTP API (ADR-0005)
-  worker/       Data plane: BullMQ workers, schedules, agent loops (ADR-0004)
+  worker/       Runtime host for server deployments; scheduled jobs (ADR-0012)
   web/          Web client: Vite + React SPA, thin (ADR-0006)
 packages/
   spec/         @bridge/spec   — Manifest, dashboard schema, permissions, events, templates (ADR-0002)
@@ -88,7 +88,7 @@ packages/
   db/           @bridge/db     — Drizzle schema, migrations, server + embedded drivers (ADR-0003, ADR-0009)
   queue/        @bridge/queue  — JobQueue interface, BullMQ + in-process drivers (ADR-0010)
   providers/    @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing, registry
-  runtime/      @bridge/runtime   — compiler, agent loop, run executor, secrets, provider resolution (ADR-0012)
+  runtime/      @bridge/runtime   — compiler, agent loop, executor, tools, MCP, sandbox (ADR-0012, ADR-0013)
   ui/           @bridge/ui     — design tokens (CSS variables), brand assets, base styles
 docs/
   architecture/ ADR-*.md
@@ -124,6 +124,8 @@ Nothing imports from apps/*.
 | Adapters | `@bridge/sdk` interfaces (provider/tool/channel) | ADR-0007 |
 | Deployment targets | `local` / `self-hosted` / `cloud`, one portable Manifest | ADR-0008 |
 | Secrets & crypto | `SecretStore` interface; Node stdlib crypto, no native deps | ADR-0011 |
+| Run dispatch | Claimed from the database with `SKIP LOCKED`, heartbeated | ADR-0012 |
+| Approvals | Loop is a serializable frame stack; a paused run is a checkpoint | ADR-0013 |
 | Tests | Vitest (against embedded Postgres) |  |
 | Logging | pino, structured JSON |  |
 | Dev/server infra | Docker Compose (postgres:17, redis:7) — optional |  |
@@ -184,19 +186,54 @@ tokens only (accent, background, appearance) — Bridge branding is not
 overridable. The renderer is Phase 6; the schema is stable now so templates
 and the AI editor target it from day one.
 
-## 6. Permissions (`@bridge/spec/permissions`)
+## 6. Permissions and approvals
 
-Pure, deterministic evaluation shipped now (used by every later phase):
+Pure, deterministic evaluation, consulted on **every** tool call:
 
 ```text
-evaluatePermission(policy, resource, action) → allow | deny | ask
+decidePermission(policy, resource, action) → { effect, matched }
+decideToolPermission(policy, tool, action, dangerous) → allow | deny | ask
 ```
 
 Ordered rules, first match wins (resource exact or glob `tool:github*`,
-action exact or `*`), fall through to `policy.default`. Tools declare
-`dangerousActions`; the compiler emits `ask` rules for them unless the user
-explicitly allowed. Approval workflows (Phase 4) consume the `ask` result and
-pause runs pending an `approval.*` event.
+action exact or `*`), falling through to `policy.default`. `matched` reports
+whether a rule actually fired, which is what lets `decideToolPermission`
+**downgrade a dangerous action to `ask` when only the default would have
+allowed it** — permitting something destructive has to be a rule someone
+wrote, not a side effect of `default: allow`.
+
+Tools classify an input into an action *before* execution (`actionFor`), so
+reading a file and deleting one are separate decisions on the same tool and
+nothing runs before the decision is made.
+
+`ask` suspends the run: the loop returns its serialized frame stack, the
+executor writes it to `runs.checkpoint`, raises an `approvals` row and
+releases the worker. Deciding requeues the run; an executor rebuilds the
+frames and resumes at the exact call, executing it or feeding the denial
+reason back to the model (ADR-0013).
+
+## 6a. Tools
+
+`@bridge/runtime/tools` resolves a manifest's grants into executables:
+
+| Kind | Backed by |
+|---|---|
+| `native` | `http`, `filesystem`, `shell`, `web-search`, bound to the agent's sandbox |
+| `mcp` | One JSON-RPC client (stdio or HTTP) exposing each remote tool as `<grant>.<tool>` |
+| `http` | The native HTTP tool under the grant's name |
+
+MCP is a transport, not a second tool concept — remote tools flow through the
+same permission checks, approvals and tracing as native ones (ADR-0007).
+Grants with no implementation fail at **deploy**, not mid-run.
+
+**Sandbox enforcement** (`runtime.sandbox`): filesystem paths are resolved
+through symlinks *before* the containment check, so a link cannot be used as a
+way out; `restricted` network access resolves DNS and rejects private,
+loopback and link-local addresses, which blocks the metadata endpoint and
+SSRF via a public-looking hostname; redirects are not followed; `shell` passes
+an argument vector with a minimal environment, so no shell interpretation and
+no inherited secrets. These are process-level boundaries — container isolation
+for untrusted code is Phase 12.
 
 ## 7. Events (`@bridge/spec/events`)
 
@@ -228,6 +265,8 @@ erDiagram
     users ||--o{ workspace_members : joins
     users ||--o{ sessions : authenticates
     workspaces ||--o{ agents : owns
+    runs ||--o{ run_steps : traces
+    runs ||--o{ approvals : awaits
     workspaces ||--o{ secrets : stores
     workspaces ||--o{ provider_configs : connects
     secrets ||--o| provider_configs : credentials

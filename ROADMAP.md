@@ -1,9 +1,8 @@
 # Bridge Agent OS — Roadmap
 
-Phase 0 (architecture), Phase 1 (foundation) and Phase 2 (accounts,
-workspaces, configuration) are **complete**. Phases 3+ remain. Each phase
-lists objective, dependencies, deliverables, acceptance criteria, tests, and
-risks.
+Phases 0–4 are **complete**: architecture, foundation, accounts, the agent
+runtime, and tools/permissions/approvals. Phase 5 is next. Each phase lists
+objective, dependencies, deliverables, acceptance criteria, tests, and risks.
 
 Ordering is intentional: every phase leaves a runnable, testable system.
 
@@ -110,47 +109,70 @@ real agent loops.
 
 ---
 
-## Phase 4 — Tools, MCP, Permissions and Approvals ← NEXT
+## Phase 4 — Tools, MCP, Permissions and Approvals ✅ COMPLETE
 
 **Objective:** Agents become useful *and* controllable.
 
-**Depends on:** Phase 3 (complete). The tool-dispatch point, permission
-evaluation and the `waiting_approval` state already exist in the loop —
-this phase fills them in rather than restructuring them.
+**Delivered**
+- **Native tools** bound to a per-agent sandbox: `http`, `filesystem`,
+  `shell`, `web-search`. Each declares its actions and which of them are
+  destructive, and classifies an input into an action *before* execution so a
+  decision can be made without side effects.
+- **Sandbox enforcement** for `runtime.sandbox` (ADR-0008 levels): filesystem
+  access is confined by resolving symlinks before the check (so a link cannot
+  be used as a way out), and `restricted` network access resolves DNS and
+  rejects private, loopback and link-local addresses — which blocks the cloud
+  metadata endpoint and SSRF through a public-looking hostname. Redirects are
+  not followed. `shell` uses an argument vector, never a shell string.
+- **MCP client** over stdio and HTTP (JSON-RPC 2.0), exposing each remote tool
+  as an ordinary Bridge tool named `<grant>.<tool>` so MCP flows through the
+  same permissions, approvals and tracing as everything else.
+- **Tool registry** resolving manifest grants to implementations, with
+  `assertGrantsSupported` failing at deploy time rather than mid-run.
+- **Permission engine wired into every call.** `decideToolPermission`
+  downgrades a destructive action to `ask` when only a permissive *default*
+  would have allowed it — allowing something dangerous has to be deliberate.
+- **Approvals**: the loop became a serializable frame stack (ADR-0013), so a
+  run suspends — anywhere, including inside a subagent — writes its stack to
+  `runs.checkpoint`, and releases the worker. Deciding requeues the run and an
+  executor resumes from the exact call that was waiting. Denials carry a
+  reason back to the model.
+- **Tool execution records** on `run_steps`: tool, action, arguments, effect,
+  whether it executed, duration, and result or error.
+- Approvals API (list, approve, deny with reason) with `approval.*` events,
+  and a web approvals queue showing exactly what would run, with a pending
+  badge in the shell.
 
-**Deliverables**
-- Tool registry (native tools: HTTP, filesystem-scoped, search, code exec
-  stub) + MCP client support (stdio + HTTP transports) mapped to the Tool
-  interface.
-- Permission engine wired into every tool call (`evaluatePermission`);
-  scoped tool access from Manifest grants.
-- Human approval flow: `ask` → run pauses, `approval.requested` event,
-  approval UI in web (approve/deny with context), run resumes.
-- Tool execution records (input/output/duration/status) on runs.
-- Sandbox foundations: code execution in a container with network/filesystem
-  levels from `runtime.sandbox`.
-- Secrets permissions: which agents may use which credentials.
+**Acceptance criteria — met**
+- An agent with read access cannot write: a policy granting `read`/`list`
+  denies a `write` outright, and no human is asked.
+- Dangerous actions pause the run and wait for a human; nothing executes until
+  someone decides.
+- Every tool call is recorded and visible in the run trace.
+- Verified end to end against a live API with no Docker: an agent paused, a
+  human approved, the run resumed, and the file was actually written inside
+  the agent's sandbox.
 
-**Acceptance criteria**
-- An agent with Gmail-read cannot send Gmail; dangerous actions prompt for
-  approval; denials are logged; every tool call is recorded and visible.
-- An MCP server can be added by URL/command and its tools granted per agent.
-
-**Tests:** permission matrix table tests, approval pause/resume integration,
-MCP handshake against a fixture server, sandbox escape smoke tests
-(network/filesystem boundaries).
-
-**Risks:** sandbox depth — start with container + level flags, harden in
-Phase 12; MCP server variance — pin to spec version, tolerate partial
-implementations.
+**Deferred from this phase**
+- Per-agent credential scoping ("which agents may use which secrets"). Tools
+  do not take workspace credentials yet — provider keys are resolved per
+  workspace at execution time — so there is nothing to scope until a tool
+  needs one. MCP server credentials ride in the grant config.
+- Container-level sandboxing for code execution. The current boundaries are
+  process-level (path confinement, argument vectors, a minimal environment,
+  network policy), which is meaningful but not isolation; hardening is Phase 12.
+- Approval expiry/timeouts and notification delivery (Phase 7 brings push).
+- `web-search` needs a configured search endpoint; unconfigured it returns an
+  actionable error rather than pretending to search.
 
 ---
 
-## Phase 5 — Chat, Terminal and Channels
+## Phase 5 — Chat, Terminal and Channels ← NEXT
 
 **Objective:** Bridge Chat, Bridge CLI, and the channel framework.
 
-**Depends on:** Phase 3 (4 for approval cards).
+**Depends on:** Phases 3 and 4 (complete). Approval cards have a backing API
+and queue already; chat needs streaming wired through the loop.
 
 **Deliverables**
 - Bridge Chat (web): conversations, streaming messages (SSE), files, agent

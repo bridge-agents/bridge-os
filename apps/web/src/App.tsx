@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-do
 import { api } from "./api.js";
 import { AgentDetail } from "./routes/AgentDetail.jsx";
 import { Agents } from "./routes/Agents.jsx";
+import { Approvals } from "./routes/Approvals.jsx";
 import { Providers } from "./routes/Providers.jsx";
 import { SignIn } from "./routes/SignIn.jsx";
 import { SessionProvider, useSession } from "./session.jsx";
@@ -40,6 +41,24 @@ function RuntimeStatus() {
 
 function Shell() {
   const { user, workspace, workspaces, selectWorkspace, signOut } = useSession();
+  const [pendingApprovals, setPendingApprovals] = useState(0);
+
+  // A paused agent is waiting on a person, so surface the count everywhere.
+  useEffect(() => {
+    if (!workspace) return;
+    let cancelled = false;
+    const poll = () =>
+      api
+        .approvals(workspace.id)
+        .then(({ approvals }) => !cancelled && setPendingApprovals(approvals.length))
+        .catch(() => {});
+    void poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [workspace]);
 
   const navLink = ({ isActive }: { isActive: boolean }) =>
     `rounded-[var(--radius-sm)] px-3 py-1.5 text-sm transition ${
@@ -58,6 +77,14 @@ function Shell() {
           <nav className="flex items-center gap-1">
             <NavLink to="/agents" className={navLink}>
               Agents
+            </NavLink>
+            <NavLink to="/approvals" className={navLink}>
+              Approvals
+              {pendingApprovals > 0 && (
+                <span className="ml-1.5 rounded-full bg-warning/20 px-1.5 py-0.5 font-mono text-[10px] text-warning">
+                  {pendingApprovals}
+                </span>
+              )}
             </NavLink>
             <NavLink to="/providers" className={navLink}>
               Providers
@@ -97,6 +124,7 @@ function Shell() {
         <Routes>
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/:agentId" element={<AgentDetail />} />
+          <Route path="/approvals" element={<Approvals />} />
           <Route path="/providers" element={<Providers />} />
           <Route path="*" element={<Navigate to="/agents" replace />} />
         </Routes>

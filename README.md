@@ -23,6 +23,10 @@ create an agent — from a template, from scratch, or by describing what you
 want and letting Bridge design it. Deploy it, send it a task, and watch the
 run complete with its full trace.
 
+Agents can use tools (HTTP, files, shell, search, and any MCP server) inside
+an enforced sandbox. Anything destructive pauses the run and waits for you in
+the Approvals queue — nothing runs until you decide.
+
 The database is embedded (Postgres compiled to WASM, stored in
 `apps/api/.bridge/data`) and the agent runtime runs inside the API process, so
 there is nothing to install, start, or configure. Any OpenAI-compatible
@@ -69,7 +73,7 @@ packages/
   db/        @bridge/db        — Drizzle schema, migrations, server + embedded drivers
   queue/     @bridge/queue     — JobQueue interface, BullMQ + in-process drivers
   providers/ @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing
-  runtime/   @bridge/runtime   — compiler, agent loop, run executor, secrets
+  runtime/   @bridge/runtime   — compiler, agent loop, executor, tools, MCP, sandbox
   ui/        @bridge/ui        — design tokens, brand assets
 docs/architecture/  ADRs
 ```
@@ -101,5 +105,12 @@ docs/architecture/  ADRs
 
 Passwords are scrypt-hashed with OWASP parameters; session tokens are stored
 only as hashes; provider credentials are encrypted with AES-256-GCM and never
-returned by the API (only a masked hint like `sk-…f4a2`). Every domain table
+returned by the API (only a masked hint like `sk-…f4a2`).
+
+Agent tools run inside a sandbox: filesystem access is confined to the agent's
+own directory (resolved through symlinks, so links cannot escape), restricted
+network access rejects private and loopback addresses after a DNS lookup, and
+shell commands take an argument vector with a minimal environment. Destructive
+actions require an explicit permission rule or a human approval — a permissive
+default is never enough. Every domain table
 is workspace-scoped and cross-tenant access is covered by dedicated tests.

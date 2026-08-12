@@ -32,6 +32,19 @@ export interface BridgeTool<Input = unknown> {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: z.ZodType<Input>;
+  /**
+   * JSON Schema advertised to models. Derived from `inputSchema` when absent;
+   * set it when the authoritative schema comes from elsewhere (an MCP server
+   * publishes its own) so parameter names survive the round trip.
+   */
+  readonly jsonSchema?: Record<string, unknown>;
   readonly actions: ToolAction[];
+  /**
+   * Which declared action this input performs — reading a file and deleting
+   * one are the same tool but not the same permission. The runtime calls this
+   * *before* executing so a decision (allow / deny / ask) can be made without
+   * side effects. Defaults to the first declared action.
+   */
+  actionFor?(input: Input): string;
   execute(input: Input, ctx: ToolContext): Promise<ToolResult>;
 }

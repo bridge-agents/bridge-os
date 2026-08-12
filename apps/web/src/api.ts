@@ -97,6 +97,19 @@ export interface RunStep {
   inputTokens: number;
   outputTokens: number;
 }
+export interface Approval {
+  id: string;
+  runId: string;
+  agentId: string | null;
+  agentName: string | null;
+  agentTitle: string | null;
+  toolName: string;
+  action: string;
+  input: Record<string, unknown>;
+  status: string;
+  reason: string | null;
+  createdAt: string;
+}
 export interface RunDetail {
   run: RunSummary & { output: { content?: string } | null; error: string | null };
   steps: RunStep[];
@@ -180,6 +193,13 @@ export const api = {
       `/v1/workspaces/${workspaceId}/architect/agents/${agentId}/edit`,
       { instruction },
     ),
+
+  approvals: (workspaceId: string, status = "pending") =>
+    get<{ approvals: Approval[] }>(`/v1/workspaces/${workspaceId}/approvals?status=${status}`),
+  approve: (workspaceId: string, approvalId: string) =>
+    send<unknown>("POST", `/v1/workspaces/${workspaceId}/approvals/${approvalId}/approve`),
+  deny: (workspaceId: string, approvalId: string, reason?: string) =>
+    send<unknown>("POST", `/v1/workspaces/${workspaceId}/approvals/${approvalId}/deny`, { reason }),
 
   providers: (workspaceId: string) =>
     get<{ providers: ProviderConfig[] }>(`/v1/workspaces/${workspaceId}/providers`),

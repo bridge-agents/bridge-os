@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createLogger, generateSecretKey, parseSecretKey } from "@bridge/core";
 import { createDb, type DbHandle } from "@bridge/db";
 import pino from "pino";
@@ -6,6 +9,8 @@ import { buildApp } from "./app.js";
 export interface TestApp {
   app: ReturnType<typeof buildApp>;
   handle: DbHandle;
+  /** Throwaway directory for agent sandboxes created during the test. */
+  dataDir: string;
   /** Everything the logger emitted, for asserting secrets never reach it. */
   logs: string[];
   close(): Promise<void>;
@@ -19,10 +24,13 @@ export async function createTestApp(): Promise<TestApp> {
   const handle = await createDb("pglite:memory");
   await handle.migrate();
 
+  const dataDir = await mkdtemp(join(tmpdir(), "bridge-test-"));
+
   const logs: string[] = [];
   const logger = pino({ level: "debug" }, { write: (line: string) => void logs.push(line) });
 
   return {
+    dataDir,
     app: buildApp({
       db: handle.db,
       logger,

@@ -16,7 +16,8 @@
     "@bridge/providers": "workspace:*",
     "@bridge/sdk": "workspace:*",
     "@bridge/spec": "workspace:*",
-    "drizzle-orm": "^0.44.0"
+    "drizzle-orm": "^0.44.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

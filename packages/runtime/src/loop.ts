@@ -1,15 +1,28 @@
 import { BridgeError } from "@bridge/core";
-import type { ChatMessage, Provider, ProviderToolDefinition, TokenUsage } from "@bridge/sdk";
-import { evaluatePermission } from "@bridge/spec";
+import type {
+  BridgeTool,
+  ChatMessage,
+  Provider,
+  ProviderToolDefinition,
+  TokenUsage,
+  ToolCall,
+} from "@bridge/sdk";
+import { decideToolPermission, type PermissionEffect } from "@bridge/spec";
+import { z } from "zod";
 import type { AgentPlan, RuntimePlan } from "./compiler.js";
 
 /**
- * The agent loop: call the model, dispatch whatever it asks for, feed results
+ * The agent loop: call the model, dispatch what it asks for, feed results
  * back, repeat until it answers or a limit stops it.
  *
- * Subagents are exposed to the model as ordinary tools (`delegate_to_<name>`),
- * so delegation reuses the tool-call machinery rather than adding a parallel
- * one — and Phase 4's real tools plug into the same dispatch point.
+ * It is an explicit stack of frames rather than recursion, because a run can
+ * pause **anywhere** — including inside a subagent — waiting for a human to
+ * approve a tool call. A stack serializes; a call stack does not. Suspending
+ * writes the frames to the run's checkpoint and returns; resuming rebuilds
+ * them and continues from the exact tool call that was waiting.
+ *
+ * Subagents are exposed to the model as `delegate_to_<name>` tools, so
+ * delegation and tool use share one dispatch path.
  */
 export type RunStepRecord =
   | {
@@ -22,42 +35,86 @@ export type RunStepRecord =
   | { type: "delegation"; agentName: string; data: { to: string; task: string; result: string } }
   | { type: "error"; agentName: string; data: { message: string } };
 
+/** One agent's in-progress turn. Serialized verbatim into a run checkpoint. */
+export interface LoopFrame {
+  agentName: string;
+  messages: ChatMessage[];
+  /** Tool calls from the last assistant turn not yet handled, in order. */
+  pending: ToolCall[];
+  /** When this frame is a subagent, the parent tool call its answer satisfies. */
+  returnToolCallId?: string;
+}
+
+export interface LoopCheckpoint {
+  frames: LoopFrame[];
+  usage: TokenUsage;
+  /** Model calls already spent, so a resumed run keeps its original budget. */
+  iterations: number;
+}
+
+export interface ApprovalRequest {
+  agentName: string;
+  toolName: string;
+  action: string;
+  input: Record<string, unknown>;
+  toolCallId: string;
+}
+
+export interface ApprovalDecision {
+  approved: boolean;
+  reason?: string;
+}
+
 export interface LoopDeps {
-  /** Resolves an adapter for a provider id; credentials are injected by the caller. */
   getProvider(providerId: string): Promise<Provider>;
-  /** Persist a step as it happens, so a crash leaves a partial trace, not nothing. */
+  /** Executable tools for one agent, already bound to its sandbox. */
+  toolsFor(agentName: string): BridgeTool[] | Promise<BridgeTool[]>;
   onStep(step: RunStepRecord): Promise<void>;
-  /** Checked between steps; true ends the run as cancelled. */
   isCancelled(): Promise<boolean>;
-  /** Wall-clock deadline in epoch ms, derived from runtime.limits.maxRunSeconds. */
+  context: { workspaceId: string; agentId: string; runId: string };
+  log?: (message: string, data?: Record<string, unknown>) => void;
   deadlineAt?: number;
   now?: () => number;
-  /** Guards against a model that keeps calling tools forever. */
   maxIterations?: number;
-  /** Guards against delegation cycles between agents. */
   maxDepth?: number;
 }
 
-export interface LoopResult {
-  content: string;
-  messages: ChatMessage[];
-  usage: TokenUsage;
-  status: "succeeded" | "cancelled" | "refused" | "limit_reached";
-}
+export type LoopResult =
+  | {
+      status: "succeeded" | "cancelled" | "refused" | "limit_reached";
+      content: string;
+      usage: TokenUsage;
+    }
+  | {
+      status: "waiting_approval";
+      content: "";
+      usage: TokenUsage;
+      checkpoint: LoopCheckpoint;
+      request: ApprovalRequest;
+    };
 
 const DELEGATE_PREFIX = "delegate_to_";
 
-function delegationTools(agent: AgentPlan, plan: RuntimePlan): ProviderToolDefinition[] {
+function toolDefinition(tool: BridgeTool): ProviderToolDefinition {
+  let schema = tool.jsonSchema;
+  if (!schema) {
+    try {
+      schema = z.toJSONSchema(tool.inputSchema as z.ZodType) as Record<string, unknown>;
+    } catch {
+      schema = { type: "object", properties: {} };
+    }
+  }
+  return { name: tool.name, description: tool.description, inputSchema: schema };
+}
+
+function delegationDefinitions(agent: AgentPlan, plan: RuntimePlan): ProviderToolDefinition[] {
   return agent.canDelegateTo.flatMap((name) => {
     const target = plan.agents[name];
     if (!target) return [];
     return [
       {
         name: `${DELEGATE_PREFIX}${name}`,
-        description: `Delegate a self-contained task to the "${name}" agent. ${target.instructions.slice(
-          0,
-          200,
-        )}`,
+        description: `Delegate a self-contained task to the "${name}" agent. ${target.instructions.slice(0, 200)}`,
         inputSchema: {
           type: "object",
           properties: {
@@ -82,50 +139,288 @@ function addUsage(total: TokenUsage, next: TokenUsage): TokenUsage {
   };
 }
 
-/**
- * Run one agent to completion. Recurses for delegation, which is why depth is
- * bounded independently of iterations.
- */
+/** What the model is told when a tool cannot run. Denials say why. */
+function refusalMessage(toolName: string, effect: PermissionEffect, reason?: string): string {
+  return effect === "deny"
+    ? `Tool "${toolName}" is denied by this agent's permissions.${reason ? ` ${reason}` : ""} Do not retry it; continue without it or explain what you need.`
+    : `Tool "${toolName}" was not approved.${reason ? ` Reason: ${reason}` : ""} Continue without it.`;
+}
+
 export async function runAgentLoop(options: {
   plan: RuntimePlan;
-  agentName: string;
-  messages: ChatMessage[];
   deps: LoopDeps;
-  depth?: number;
+  /** A fresh run starts from these messages. */
+  messages?: ChatMessage[];
+  /** A paused run resumes from its checkpoint with the human's decision. */
+  resume?: { checkpoint: LoopCheckpoint; decision: ApprovalDecision };
 }): Promise<LoopResult> {
-  const { plan, agentName, deps, depth = 0 } = options;
+  const { plan, deps } = options;
   const now = deps.now ?? Date.now;
   const maxIterations = deps.maxIterations ?? 12;
   const maxDepth = deps.maxDepth ?? 3;
 
-  const agent = plan.agents[agentName];
-  if (!agent) throw new BridgeError("internal", `unknown agent "${agentName}"`);
+  const toolCache = new Map<string, BridgeTool[]>();
+  const toolsFor = async (agentName: string) => {
+    const cached = toolCache.get(agentName);
+    if (cached) return cached;
+    const tools = await deps.toolsFor(agentName);
+    toolCache.set(agentName, tools);
+    return tools;
+  };
 
-  const provider = await deps.getProvider(agent.model.provider);
-  const tools = depth < maxDepth ? delegationTools(agent, plan) : [];
+  const agentFor = (name: string): AgentPlan => {
+    const agent = plan.agents[name];
+    if (!agent) throw new BridgeError("internal", `unknown agent "${name}"`);
+    return agent;
+  };
 
-  const messages: ChatMessage[] = [
-    { role: "system", content: agent.instructions },
-    ...options.messages,
-  ];
-  let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+  let frames: LoopFrame[];
+  let usage: TokenUsage;
+  let iterations: number;
 
-  for (let iteration = 0; iteration < maxIterations; iteration++) {
-    if (await deps.isCancelled()) return { content: "", messages, usage, status: "cancelled" };
-    if (deps.deadlineAt !== undefined && now() > deps.deadlineAt) {
-      return { content: "", messages, usage, status: "limit_reached" };
+  if (options.resume) {
+    ({ frames, usage, iterations } = {
+      frames: options.resume.checkpoint.frames.map((frame) => ({ ...frame })),
+      usage: options.resume.checkpoint.usage,
+      iterations: options.resume.checkpoint.iterations,
+    });
+  } else {
+    const entry = agentFor(plan.entryAgent);
+    frames = [
+      {
+        agentName: entry.name,
+        messages: [{ role: "system", content: entry.instructions }, ...(options.messages ?? [])],
+        pending: [],
+      },
+    ];
+    usage = { inputTokens: 0, outputTokens: 0 };
+    iterations = 0;
+  }
+
+  /** Execute one already-authorized tool call and record it. */
+  const execute = async (
+    frame: LoopFrame,
+    call: ToolCall,
+    tool: BridgeTool,
+    action: string,
+  ): Promise<void> => {
+    const started = now();
+    const parsed = tool.inputSchema.safeParse(call.arguments);
+
+    const result = parsed.success
+      ? await tool.execute(parsed.data, {
+          workspaceId: deps.context.workspaceId,
+          agentId: deps.context.agentId,
+          runId: deps.context.runId,
+          log: (message, data) => deps.log?.(message, data),
+          // Defence in depth: the loop already decided, but a tool that asks
+          // must get the same answer.
+          checkPermission: (checked) =>
+            decideToolPermission(
+              plan.permissions,
+              tool.name,
+              checked,
+              tool.actions.find((entry) => entry.name === checked)?.dangerous ?? false,
+            ),
+        })
+      : {
+          ok: false,
+          output: null,
+          error: `invalid input: ${parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`).join("; ")}`,
+        };
+
+    await deps.onStep({
+      type: "tool_call",
+      agentName: frame.agentName,
+      data: {
+        tool: tool.name,
+        action,
+        arguments: call.arguments,
+        effect: "allow",
+        executed: true,
+        ok: result.ok,
+        durationMs: Math.round(now() - started),
+        output: result.ok ? result.output : undefined,
+        error: result.error,
+      },
+    });
+
+    frame.messages.push({
+      role: "tool",
+      content:
+        typeof result.output === "string"
+          ? result.output || (result.error ?? "")
+          : JSON.stringify(result.ok ? result.output : { error: result.error }),
+      toolCallId: call.id,
+    });
+  };
+
+  // A resumed run continues at the exact call that was waiting.
+  if (options.resume) {
+    const frame = frames.at(-1);
+    const call = frame?.pending[0];
+    if (frame && call) {
+      frame.pending.shift();
+      const { decision } = options.resume;
+      const tools = await toolsFor(frame.agentName);
+      const tool = tools.find((candidate) => candidate.name === call.name);
+
+      if (!decision.approved || !tool) {
+        await deps.onStep({
+          type: "tool_call",
+          agentName: frame.agentName,
+          data: {
+            tool: call.name,
+            arguments: call.arguments,
+            effect: "ask",
+            executed: false,
+            approved: false,
+            reason: decision.reason,
+          },
+        });
+        frame.messages.push({
+          role: "tool",
+          content: refusalMessage(call.name, "ask", decision.reason),
+          toolCallId: call.id,
+        });
+      } else {
+        const action = tool.actionFor?.(call.arguments) ?? tool.actions[0]?.name ?? "call";
+        await execute(frame, call, tool, action);
+      }
     }
+  }
+
+  while (frames.length > 0) {
+    if (await deps.isCancelled()) return { status: "cancelled", content: "", usage };
+    if (deps.deadlineAt !== undefined && now() > deps.deadlineAt) {
+      return { status: "limit_reached", content: "", usage };
+    }
+
+    const frame = frames.at(-1);
+    if (!frame) break;
+
+    // 1. Drain tool calls the model already asked for.
+    let delegated = false;
+    while (frame.pending.length > 0) {
+      const call = frame.pending[0];
+      if (!call) break;
+
+      if (call.name.startsWith(DELEGATE_PREFIX)) {
+        frame.pending.shift();
+        const targetName = call.name.slice(DELEGATE_PREFIX.length);
+        const task = String(call.arguments.task ?? "");
+
+        if (frames.length > maxDepth || !plan.agents[targetName]) {
+          frame.messages.push({
+            role: "tool",
+            content: `Cannot delegate to "${targetName}" here. Do the work yourself.`,
+            toolCallId: call.id,
+          });
+          continue;
+        }
+
+        // Subagents start clean: only the task they were handed.
+        frames.push({
+          agentName: targetName,
+          messages: [
+            { role: "system", content: agentFor(targetName).instructions },
+            { role: "user", content: task },
+          ],
+          pending: [],
+          returnToolCallId: call.id,
+        });
+        delegated = true;
+        break;
+      }
+
+      const tools = await toolsFor(frame.agentName);
+      const tool = tools.find((candidate) => candidate.name === call.name);
+      if (!tool) {
+        frame.pending.shift();
+        await deps.onStep({
+          type: "tool_call",
+          agentName: frame.agentName,
+          data: { tool: call.name, executed: false, error: "unknown tool" },
+        });
+        frame.messages.push({
+          role: "tool",
+          content: `Tool "${call.name}" is not available to this agent.`,
+          toolCallId: call.id,
+        });
+        continue;
+      }
+
+      const action = tool.actionFor?.(call.arguments) ?? tool.actions[0]?.name ?? "call";
+      const dangerous = tool.actions.find((entry) => entry.name === action)?.dangerous ?? false;
+      const effect = decideToolPermission(plan.permissions, tool.name, action, dangerous);
+
+      if (effect === "ask") {
+        // Suspend: the call stays at the head of `pending` so a resume knows
+        // exactly what it is deciding about.
+        return {
+          status: "waiting_approval",
+          content: "",
+          usage,
+          checkpoint: { frames, usage, iterations },
+          request: {
+            agentName: frame.agentName,
+            toolName: tool.name,
+            action,
+            input: call.arguments,
+            toolCallId: call.id,
+          },
+        };
+      }
+
+      frame.pending.shift();
+      if (effect === "deny") {
+        await deps.onStep({
+          type: "tool_call",
+          agentName: frame.agentName,
+          data: { tool: tool.name, action, arguments: call.arguments, effect, executed: false },
+        });
+        frame.messages.push({
+          role: "tool",
+          content: refusalMessage(tool.name, "deny"),
+          toolCallId: call.id,
+        });
+        continue;
+      }
+
+      await execute(frame, call, tool, action);
+    }
+    if (delegated) continue;
+
+    // 2. Ask the model what to do next.
+    if (iterations >= maxIterations) {
+      await deps.onStep({
+        type: "error",
+        agentName: frame.agentName,
+        data: { message: `stopped after ${maxIterations} model calls without a final answer` },
+      });
+      return { status: "limit_reached", content: "", usage };
+    }
+    iterations++;
+
+    const agent = agentFor(frame.agentName);
+    const provider = await deps.getProvider(agent.model.provider);
+    const definitions = [
+      ...(frames.length <= maxDepth ? delegationDefinitions(agent, plan) : []),
+      ...(await toolsFor(frame.agentName)).map(toolDefinition),
+    ];
 
     const result = await provider.complete({
       model: agent.model.model,
-      messages,
-      ...(tools.length ? { tools } : {}),
+      // A copy: the loop keeps appending to the frame, and an adapter that
+      // held the live array would see turns that were not part of its request.
+      messages: [...frame.messages],
+      ...(definitions.length ? { tools: definitions } : {}),
     });
     usage = addUsage(usage, result.usage);
 
     await deps.onStep({
       type: "model_call",
-      agentName,
+      agentName: frame.agentName,
       data: {
         model: result.model ?? agent.model.model,
         provider: agent.model.provider,
@@ -134,64 +429,40 @@ export async function runAgentLoop(options: {
       },
       usage: result.usage,
     });
-
-    messages.push(result.message);
-
-    // A refusal is a successful response with no usable content — stop cleanly.
-    if (result.stopReason === "refusal") {
-      return { content: result.message.content, messages, usage, status: "refused" };
-    }
+    frame.messages.push(result.message);
 
     const toolCalls = result.message.toolCalls ?? [];
-    if (result.stopReason !== "tool_use" || toolCalls.length === 0) {
-      return { content: result.message.content, messages, usage, status: "succeeded" };
+    if (result.stopReason === "tool_use" && toolCalls.length > 0) {
+      frame.pending = [...toolCalls];
+      continue;
     }
 
-    for (const call of toolCalls) {
-      if (call.name.startsWith(DELEGATE_PREFIX)) {
-        const target = call.name.slice(DELEGATE_PREFIX.length);
-        const task = String(call.arguments.task ?? "");
-
-        // Subagents start with a clean context: only the task they were given.
-        const sub = await runAgentLoop({
-          plan,
-          agentName: target,
-          messages: [{ role: "user", content: task }],
-          deps,
-          depth: depth + 1,
-        });
-        usage = addUsage(usage, sub.usage);
-
-        await deps.onStep({
-          type: "delegation",
-          agentName,
-          data: { to: target, task, result: sub.content },
-        });
-        messages.push({ role: "tool", content: sub.content, toolCallId: call.id });
-        continue;
-      }
-
-      // Phase 4 registers real tools here. Until then the permission engine is
-      // still consulted, so the decision path is exercised from day one.
-      const effect = evaluatePermission(plan.permissions, `tool:${call.name}`, "execute");
-      const message =
-        effect === "deny"
-          ? `Tool "${call.name}" is denied by this agent's permissions.`
-          : `Tool "${call.name}" is not available in this Bridge build yet. Continue without it.`;
-
-      await deps.onStep({
-        type: "tool_call",
-        agentName,
-        data: { tool: call.name, arguments: call.arguments, effect, executed: false },
-      });
-      messages.push({ role: "tool", content: message, toolCallId: call.id });
+    // A refusal at the top ends the run; inside a subagent it is that
+    // subagent's answer, and the parent decides what to do about it.
+    if (result.stopReason === "refusal" && frames.length === 1) {
+      return { status: "refused", content: result.message.content, usage };
     }
+
+    // 3. This frame is done — return its answer to its parent, or finish.
+    frames.pop();
+    const parent = frames.at(-1);
+    if (!parent) return { status: "succeeded", content: result.message.content, usage };
+
+    await deps.onStep({
+      type: "delegation",
+      agentName: parent.agentName,
+      data: {
+        to: frame.agentName,
+        task: String(frame.messages[1]?.content ?? ""),
+        result: result.message.content,
+      },
+    });
+    parent.messages.push({
+      role: "tool",
+      content: result.message.content,
+      toolCallId: frame.returnToolCallId ?? "",
+    });
   }
 
-  await deps.onStep({
-    type: "error",
-    agentName,
-    data: { message: `stopped after ${maxIterations} iterations without a final answer` },
-  });
-  return { content: "", messages, usage, status: "limit_reached" };
+  return { status: "succeeded", content: "", usage };
 }

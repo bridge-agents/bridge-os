@@ -1,6 +1,7 @@
 import { BridgeError } from "@bridge/core";
 import { agents, appendEvent, conversations, messages, runSteps, runs } from "@bridge/db";
 import {
+  assertGrantsSupported,
   compile,
   connectedProviders,
   createConversation,
@@ -39,6 +40,7 @@ export function runRoutes(deps: AppDeps) {
 
     // Compiling here means a broken agent fails at deploy, not mid-run.
     const plan = compile(parseManifest(agent.manifest));
+    assertGrantsSupported(plan.tools);
     const connected = await connectedProviders(deps.db, workspaceId);
     const missing = requiredProviders(plan).filter((provider) => !connected.has(provider));
     if (missing.length > 0) {

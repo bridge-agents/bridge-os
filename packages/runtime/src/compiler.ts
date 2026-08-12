@@ -20,6 +20,8 @@ export interface AgentPlan {
 export interface RuntimePlan {
   entryAgent: string;
   agents: Record<string, AgentPlan>;
+  /** Every tool grant in the manifest, so one registry serves the whole run. */
+  tools: ToolGrant[];
   permissions: PermissionPolicy;
   limits: {
     maxConcurrentRuns: number;
@@ -27,6 +29,7 @@ export interface RuntimePlan {
     dailyTokenBudget?: number;
     dailySpendUsd?: number;
   };
+  sandbox: { network: "none" | "restricted" | "full"; filesystem: "none" | "workspace" | "full" };
   deployment: { target: string; background: boolean };
 }
 
@@ -72,8 +75,10 @@ export function compile(manifest: Manifest): RuntimePlan {
   return {
     entryAgent: manifest.entryAgent,
     agents,
+    tools: manifest.tools,
     permissions: manifest.permissions,
     limits: manifest.runtime.limits,
+    sandbox: manifest.runtime.sandbox,
     deployment: manifest.deployment,
   };
 }
