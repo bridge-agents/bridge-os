@@ -1,0 +1,39 @@
+/*
+ * Bridge design tokens — the single theming surface (ADR-0006).
+ * User customisation (accent, background, appearance) rewrites these values;
+ * components only ever reference tokens. The Bridge logo, name, and core
+ * design language are not themeable.
+ */
+:root {
+  /* Surfaces (near-black, graphite) */
+  --bridge-bg: #0a0a0b;
+  --bridge-bg-raised: #131315;
+  --bridge-bg-overlay: #1b1b1e;
+
+  /* Borders */
+  --bridge-border: #26262a;
+  --bridge-border-strong: #35353b;
+
+  /* Text */
+  --bridge-text: #ededef;
+  --bridge-text-muted: #8f8f98;
+  --bridge-text-faint: #5c5c64;
+
+  /* Brand accent: metallic silver */
+  --bridge-accent: #c6c6ce;
+  --bridge-accent-contrast: #0a0a0b;
+
+  /* Status */
+  --bridge-success: #3ecf8e;
+  --bridge-warning: #f5a623;
+  --bridge-danger: #f0544c;
+
+  /* Geometry */
+  --bridge-radius-sm: 6px;
+  --bridge-radius-md: 10px;
+  --bridge-radius-lg: 16px;
+
+  /* Typography */
+  --bridge-font-sans: "Inter", -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --bridge-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", monospace;
+}

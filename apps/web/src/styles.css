@@ -1,0 +1,28 @@
+@import "tailwindcss";
+@import "@bridge/ui/tokens.css";
+
+@theme {
+  --color-bg: var(--bridge-bg);
+  --color-bg-raised: var(--bridge-bg-raised);
+  --color-bg-overlay: var(--bridge-bg-overlay);
+  --color-border: var(--bridge-border);
+  --color-border-strong: var(--bridge-border-strong);
+  --color-text: var(--bridge-text);
+  --color-text-muted: var(--bridge-text-muted);
+  --color-text-faint: var(--bridge-text-faint);
+  --color-accent: var(--bridge-accent);
+  --color-success: var(--bridge-success);
+  --color-warning: var(--bridge-warning);
+  --color-danger: var(--bridge-danger);
+  --font-sans: var(--bridge-font-sans);
+  --font-mono: var(--bridge-font-mono);
+  --radius-sm: var(--bridge-radius-sm);
+  --radius-md: var(--bridge-radius-md);
+  --radius-lg: var(--bridge-radius-lg);
+}
+
+body {
+  background: var(--bridge-bg);
+  color: var(--bridge-text);
+  font-family: var(--bridge-font-sans);
+}
