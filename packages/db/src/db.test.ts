@@ -1,25 +1,31 @@
 import { newAgentId, newWorkspaceId } from "@bridge/core";
 import { parseManifest, personalAssistantTemplate, SPEC_VERSION } from "@bridge/spec";
 import { eq } from "drizzle-orm";
-import { afterAll, describe, expect, it } from "vitest";
-import { createDb } from "./client.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDb, type DbHandle } from "./client.js";
 import { agents, workspaces } from "./schema.js";
 
 /**
- * Integration test: requires a migrated database (DATABASE_URL). Runs in CI
- * against the postgres service; skipped locally when the env var is absent.
+ * Runs against embedded Postgres by default — no Docker, no services, so the
+ * same suite covers the desktop runtime. Point DATABASE_URL at a server to
+ * exercise the postgres-js driver instead.
  */
-const url = process.env.DATABASE_URL;
+const url = process.env.DATABASE_URL ?? "pglite:memory";
 
-describe.skipIf(!url)("db round-trip", () => {
-  const { db, close } = url ? createDb(url) : { db: undefined, close: async () => {} };
+describe(`db round-trip (${url.split(":")[0]})`, () => {
+  let handle: DbHandle;
+
+  beforeAll(async () => {
+    handle = await createDb(url);
+    await handle.migrate();
+  }, 60_000);
 
   afterAll(async () => {
-    await close();
+    await handle?.close();
   });
 
   it("stores and returns a manifest that still validates", async () => {
-    if (!db) throw new Error("unreachable");
+    const { db } = handle;
     const workspaceId = newWorkspaceId();
     const agentId = newAgentId();
     const manifest = personalAssistantTemplate.manifest;

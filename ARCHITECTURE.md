@@ -81,8 +81,9 @@ apps/
 packages/
   spec/         @bridge/spec   — Manifest, dashboard schema, permissions, events, templates (ADR-0002)
   sdk/          @bridge/sdk    — provider / tool / channel adapter interfaces (ADR-0007)
-  core/         @bridge/core   — ids, errors, env, structured logging (pino)
-  db/           @bridge/db     — Drizzle schema, migrations, client (ADR-0003)
+  core/         @bridge/core   — ids, errors, env, logging, crypto (ADR-0011)
+  db/           @bridge/db     — Drizzle schema, migrations, server + embedded drivers (ADR-0003, ADR-0009)
+  queue/        @bridge/queue  — JobQueue interface, BullMQ + in-process drivers (ADR-0010)
   ui/           @bridge/ui     — design tokens (CSS variables), brand assets, base styles
 docs/
   architecture/ ADR-*.md
@@ -93,9 +94,10 @@ docker-compose.yml   Local Postgres + Redis
 Dependency rule (enforced by review, later by lint):
 
 ```text
-apps/*  →  @bridge/{spec,sdk,core,db,ui}
+apps/*  →  @bridge/{spec,sdk,core,db,queue,ui}
 @bridge/db → @bridge/core
 @bridge/sdk → @bridge/spec
+@bridge/queue → (bullmq only; no Bridge deps)
 @bridge/spec → zod only        (pure contracts, no runtime deps)
 Nothing imports from apps/*.
 ```
@@ -108,14 +110,35 @@ Nothing imports from apps/*.
 | Monorepo | pnpm workspaces + Turborepo | ADR-0001 |
 | Lint/format | Biome (single tool) | ADR-0001 |
 | Contracts/validation | Zod schemas in `@bridge/spec` | ADR-0002 |
-| Database | PostgreSQL + Drizzle ORM + drizzle-kit migrations | ADR-0003 |
-| Queue/background | Redis + BullMQ | ADR-0004 |
+| Database | PostgreSQL + Drizzle; server driver (postgres.js) or embedded (PGlite) | ADR-0003, ADR-0009 |
+| Queue/background | `JobQueue` interface; BullMQ/Redis or in-process | ADR-0004, ADR-0010 |
 | API framework | Hono on Node | ADR-0005 |
 | Web | Vite + React SPA, Tailwind v4 + token CSS | ADR-0006 |
 | Adapters | `@bridge/sdk` interfaces (provider/tool/channel) | ADR-0007 |
-| Tests | Vitest |  |
+| Deployment targets | `local` / `self-hosted` / `cloud`, one portable Manifest | ADR-0008 |
+| Secrets & crypto | `SecretStore` interface; Node stdlib crypto, no native deps | ADR-0011 |
+| Tests | Vitest (against embedded Postgres) |  |
 | Logging | pino, structured JSON |  |
-| Local infra | Docker Compose (postgres:17, redis:7) |  |
+| Dev/server infra | Docker Compose (postgres:17, redis:7) — optional |  |
+
+## 3a. Deployment targets and runtime portability
+
+Docker is a development and server-distribution choice, **never a runtime
+prerequisite** (ADR-0008). Each infrastructure dependency sits behind a driver
+with an implementation that requires nothing installed:
+
+| Concern | `local` (desktop) | `self-hosted` / `cloud` |
+|---|---|---|
+| Database | PGlite embedded in-process (`pglite:<path>`) | Postgres server (`postgres://…`) |
+| Queue | In-process `LocalQueue` | BullMQ on Redis |
+| Secrets | OS keychain (planned) / encrypted rows | Encrypted rows / KMS |
+| Lifecycle | Desktop app manages the runtime | Operator or Bridge Cloud |
+
+The same schema, migrations, queries, API and runtime code serve all three.
+A Manifest carries `deployment: { target, background }` and nothing else that
+is target-specific, so an agent moves between targets by changing one field.
+Runtime location and model location are independent: a `local` agent can call
+hosted APIs, local models, or both.
 
 ## 4. The Bridge Manifest (`@bridge/spec`)
 
@@ -190,24 +213,30 @@ Three small interfaces keep vendors and integrations at the edge:
 - **Channel**: lifecycle (`start`/`stop`) + `send()` + inbound message
   handler. Runtime knows only this interface, never Telegram/Discord APIs.
 
-## 9. Data Model (Phase 1 baseline)
+## 9. Data Model
 
 ```mermaid
 erDiagram
     workspaces ||--o{ workspace_members : has
     users ||--o{ workspace_members : joins
+    users ||--o{ sessions : authenticates
     workspaces ||--o{ agents : owns
+    workspaces ||--o{ secrets : stores
+    workspaces ||--o{ provider_configs : connects
+    secrets ||--o| provider_configs : credentials
     agents ||--o{ runs : executes
     workspaces ||--o{ events : logs
 ```
 
 `agents.manifest` is `jsonb` (the Manifest is the source of truth;
-relational columns index what queries need: slug, status, spec_version).
-`runs` carries status, trigger, timing, token counts and `cost_usd`.
-`events` is the append-only audit/event log. All rows are workspace-scoped —
-multi-tenant isolation is a query invariant from day one. Auth, secrets,
-conversations, memory, approvals tables arrive with their phases as
-migrations.
+relational columns index what queries need: slug, status, spec_version), and
+rows are re-validated through `@bridge/spec` on read. `runs` carries status,
+trigger, timing, token counts and `cost_usd`. `events` is the append-only
+audit/event log. `sessions` stores only token hashes; `secrets` stores only
+ciphertext plus a masked hint. All domain rows are workspace-scoped —
+multi-tenant isolation is a query invariant enforced by middleware and
+covered by dedicated tests. Conversations, memory and approvals tables arrive
+with their phases as migrations.
 
 ## 10. Security Architecture
 
@@ -235,10 +264,22 @@ events. Long-running agents = durable state + queue, not long-lived
 processes — this is what lets the UI close while agents keep working, and
 what lets Cloud scale workers horizontally later.
 
-## 12. Self-Host vs Cloud
+## 12. Local vs Self-Host vs Cloud
 
-Community = this repo: `docker compose up` brings Postgres + Redis + api +
-worker + web. Cloud adds managed infra (hosted runtime, secrets/KMS, backups,
-auth/teams/billing, metering) *around* the same images and packages — never
-forks the runtime. Anything Cloud-only lives behind interfaces defined in
-core packages (e.g. secrets driver, sandbox driver).
+**Local desktop (Community).** The desktop app starts and supervises the
+Bridge runtime on the user's machine: embedded database, in-process queue,
+OS-keychain secrets, no Docker, no ports to configure, no terminal. Bridge
+owns the lifecycle and reports agent state (running, paused, stopped,
+waiting, offline) plus an explicit control for background operation. Agents
+run while the device is available — the honest limit that Cloud upgrades.
+
+**Self-hosted server (Community).** `docker compose up` (or bare Node) brings
+Postgres + Redis + api + worker + web for developers, homelabs, VPSs and
+organisations. Desktop, mobile, web and CLI clients connect to that instance.
+
+**Cloud.** Managed infra (hosted runtime, KMS secrets, backups, auth/teams/
+billing, metering) *around* the same images and packages — never a fork of
+the runtime. Anything Cloud-only lives behind interfaces already defined in
+core packages (storage driver, queue driver, secrets driver, sandbox driver),
+so Community keeps a genuinely useful product and manifests stay portable
+between all three.

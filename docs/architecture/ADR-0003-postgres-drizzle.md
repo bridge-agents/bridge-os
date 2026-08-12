@@ -1,6 +1,12 @@
 # ADR-0003: PostgreSQL as the only database; Drizzle ORM with SQL migrations
 
-Status: accepted (2026-08-12)
+Status: accepted (2026-08-12); **amended by [ADR-0009](ADR-0009-embedded-database.md)**
+
+> Amendment: "one PostgreSQL" still holds, but "a Postgres *server*" does not.
+> ADR-0009 adds an embedded PGlite driver so desktop installs get the same
+> Postgres dialect, schema and migrations with no service to run. Read the two
+> together: everything below about Drizzle, jsonb manifests and SQL migrations
+> is unchanged.
 
 ## Context
 Bridge needs relational data (workspaces, agents, runs), document storage
@@ -22,7 +28,8 @@ staying `docker compose up`-simple for self-hosters.
   second schema authority: rows are parsed through `@bridge/spec` on read.
 
 ## Consequences
-- Self-host stays one database container. Cloud can point the same code at
+- Self-host stays one database container; desktop uses the embedded driver
+  from ADR-0009 and no container at all. Cloud points the same code at
   managed Postgres.
 - No Prisma engine downloads in Docker images; smaller, simpler builds.
 - Multi-tenancy is enforced at the query layer (`workspace_id` everywhere)

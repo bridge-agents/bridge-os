@@ -1,55 +1,67 @@
 # Bridge Agent OS — Roadmap
 
-Phase 0 (architecture) and Phase 1 (foundation) are **complete** — built by
-Fable 5. Phases 2+ are implemented by Opus 5. Each phase lists objective,
-dependencies, deliverables, acceptance criteria, tests, and risks.
+Phase 0 (architecture), Phase 1 (foundation) and Phase 2 (accounts,
+workspaces, configuration) are **complete**. Phases 3+ remain. Each phase
+lists objective, dependencies, deliverables, acceptance criteria, tests, and
+risks.
 
 Ordering is intentional: every phase leaves a runnable, testable system.
 
+A standing requirement for every phase from here on: **nothing may make
+Docker, a Postgres server, or a Redis server a prerequisite for a desktop
+user** (ADR-0008). New infrastructure goes behind a driver with a
+zero-install implementation.
+
 ---
 
-## Phase 2 — Accounts, Workspaces and Core Configuration
+## Phase 2 — Accounts, Workspaces and Core Configuration ✅ COMPLETE
 
 **Objective:** Real users, workspaces, agent CRUD, provider configuration and
 secret handling on top of the Phase 1 skeleton.
 
-**Depends on:** Phase 1.
+**Delivered**
+- Email+password auth (scrypt, OWASP parameters, stdlib only per ADR-0011),
+  sessions stored as hashes, cookie *and* bearer paths so the CLI is a
+  first-class client from day one. Rate-limited credential endpoints.
+- Users, workspaces, membership roles (`owner`/`admin`/`member`), member
+  add/remove with last-owner protection. Signup provisions a starter
+  workspace (onboarding foundation).
+- Agent CRUD persisting validated Manifests as jsonb, re-validated on read;
+  create from template, from a raw manifest, or blank; full-manifest replace;
+  slug uniqueness per workspace; `agent.*` audit events.
+- Template catalog as data (`personal-assistant`, `software-team`,
+  `research-agent`) with `instantiateTemplate` and `blankManifest` — one
+  validated path for every creation route.
+- Provider configuration per workspace with encrypted secret storage behind
+  the `SecretStore` interface; hosted providers take keys, local endpoints
+  take base URLs; API returns masked hints only.
+- Runtime portability correction: embedded-database and in-process-queue
+  drivers (ADR-0009/0010), `deployment.target` on the Manifest (ADR-0008).
+- Web: auth screens, workspace switcher, template gallery, agent list,
+  manifest editor with server-side validation errors, provider management.
 
-**Deliverables**
-- Authentication (email+password with argon2, session cookies; API tokens for
-  CLI later). Keep an interface that Cloud can swap for managed auth.
-- Users, workspaces, membership roles (`owner`, `admin`, `member`) — tables
-  exist; add auth glue + invitation flow.
-- Workspace settings; agent CRUD persisting validated Manifests (jsonb).
-- Template system: templates as data (`@bridge/spec` `TemplateSchema`),
-  seeded catalog, instantiate → Manifest.
-- Provider configuration per workspace + encrypted secrets storage
-  (libsodium/`crypto` AEAD; key from env `BRIDGE_SECRET_KEY`). Secrets table
-  stores ciphertext only; API returns references, never values.
-- Permission defaults per workspace; onboarding flow skeleton in web.
-
-**Acceptance criteria**
+**Acceptance criteria — met**
 - A user can sign up, create a workspace, connect a provider key (stored
   encrypted), create an agent from a template or blank, edit and save its
-  Manifest; invalid manifests are rejected with actionable errors.
-- No endpoint returns data across workspace boundaries (tested).
+  Manifest; invalid manifests are rejected with actionable field-level errors.
+- No endpoint returns data across workspace boundaries (16 isolation tests).
 - Secret values never appear in logs, API responses, or client bundles.
+- The whole flow runs with no Docker and survives a restart.
 
-**Tests:** auth flows, workspace isolation (attempt cross-tenant reads),
-secret round-trip + redaction, manifest persistence/migration, template
-instantiation.
-
-**Risks:** auth scope creep (defer SSO/OAuth to Cloud); secret key
-management ergonomics for self-hosters (document key rotation).
+**Deferred from this phase**
+- Email invitations for people without a Bridge account (needs an outbound
+  mail path; Cloud).
+- API tokens distinct from sessions, and SSO/OAuth (Cloud).
+- Key rotation tooling for `BRIDGE_SECRET_KEY` (documented, not automated).
 
 ---
 
-## Phase 3 — Agent Architect + Runtime
+## Phase 3 — Agent Architect + Runtime ← NEXT
 
 **Objective:** First functional agent system: create conversationally, run
 real agent loops through the queue.
 
-**Depends on:** Phase 2.
+**Depends on:** Phase 2 (complete).
 
 **Deliverables**
 - Anthropic + OpenAI + OpenAI-compatible provider adapters implementing
@@ -72,6 +84,8 @@ real agent loops through the queue.
   language, deploys it, sends it a task, watches it complete with visible
   run states; stop/restart works; a killed worker resumes queued runs.
 - Different agents in one manifest can use different providers.
+- The whole loop works on the in-process queue and embedded database with no
+  Docker running, and identically on the Redis/Postgres drivers.
 
 **Tests:** state machine transitions (unit), resumability (kill worker
 mid-run in integration test), provider adapter contract tests against
@@ -175,25 +189,50 @@ data-binding performance (paginate/aggregate server-side).
 
 ---
 
-## Phase 7 — Desktop + Mobile
+## Phase 7 — Desktop App + Local Runtime Packaging (and Mobile)
 
-**Objective:** Polished native-feeling clients focused on Chat, agents,
-tasks, approvals, notifications, dashboards, status.
+**Objective:** Deliver the consumer install: `Bridge.dmg`, a Windows
+installer and a Linux package that a normal user runs with no infrastructure
+knowledge — plus mobile as a control surface.
 
-**Depends on:** Phase 5 (6 for dashboards).
+**Depends on:** Phase 5 (6 for dashboards). The driver work it relies on
+(embedded database, in-process queue, secrets interface) landed in Phase 2.
 
-**Deliverables:** Desktop via Tauri wrapping the web client with native menus,
-notifications, and deep links; Mobile via Expo/React Native sharing the API
-client + design tokens (not web DOM code); push notifications for approvals.
+**Deliverables**
+- Desktop shell (Tauri preferred — small bundle, no Chromium, and the runtime
+  is already pure JS/WASM per ADR-0011) wrapping the web client with native
+  menus, notifications and deep links.
+- **Local runtime supervision:** the app starts, monitors, restarts and stops
+  the api/worker processes; picks a free port; stores data under the platform
+  app-data directory; migrates the embedded database on launch and on update.
+- **Background operation:** explicit user setting for whether Bridge may run
+  in the background; tray/menu-bar presence; honest per-agent status
+  (running, paused, stopped, waiting, offline) and a clear statement that
+  local agents run only while the device is available. Respect OS limits,
+  battery and user settings.
+- **Keychain-backed `SecretStore`** implementation (macOS Keychain, Windows
+  Credential Manager, libsecret) replacing the encrypted-row store on desktop.
+- Installers, code signing/notarisation, and an auto-update channel.
+- Mobile via Expo/React Native sharing the API client + design tokens (not
+  web DOM code), controlling a runtime on desktop/server/Cloud, with push
+  notifications for approvals. No promise of 24/7 on-device execution.
 
-**Acceptance criteria:** approve a pending action from a phone notification;
-desktop app passes platform notification/system-tray basics.
+**Acceptance criteria**
+- A user with no developer tooling installs Bridge, opens it, and completes
+  onboarding → agent → provider → chat without ever seeing Docker, a
+  terminal, a port, or a database.
+- Closing the window does not stop agents the user configured to run in the
+  background; quitting Bridge does, and the UI says so.
+- Approve a pending action from a phone notification.
 
-**Tests:** shared API-client test suite runs on all clients; notification
-delivery integration.
+**Tests:** packaged-app smoke test per OS (install → launch → create agent →
+run); runtime supervisor restart/crash recovery; keychain store contract
+tests against the same `SecretStore` suite; shared API-client suite on all
+clients.
 
-**Risks:** duplicated UI logic — keep domain logic in API + shared client
-package; store review cycles (mobile later in phase).
+**Risks:** per-OS packaging and signing burden (budget real time for it);
+background execution policy differences; update + database migration
+interaction — test upgrades with existing data, not just clean installs.
 
 ---
 

@@ -4,48 +4,65 @@
 user describes the AI system they want, Bridge builds the agentic
 infrastructure required to operate it.
 
-> Status: foundation phase complete. Product docs: [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md) ·
-> [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`ROADMAP.md`](ROADMAP.md) ·
-> [ADRs](docs/architecture/) · [`HANDOFF_TO_OPUS.md`](HANDOFF_TO_OPUS.md)
-
-## Prerequisites
-
-- Node ≥ 22
-- pnpm 10 (`corepack enable`)
-- Docker (for local Postgres + Redis)
+> Docs: [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md) · [`ARCHITECTURE.md`](ARCHITECTURE.md) ·
+> [`ROADMAP.md`](ROADMAP.md) · [ADRs](docs/architecture/) ·
+> [`HANDOFF_TO_OPUS.md`](HANDOFF_TO_OPUS.md)
 
 ## Quick start
+
+Needs Node ≥ 22 and pnpm 10 (`corepack enable`). **No Docker required.**
 
 ```bash
 pnpm install
 cp .env.example .env
-
-# Start Postgres + Redis
-pnpm infra:up
-
-# Apply database migrations
-pnpm db:migrate
-
-# Run everything (api :4000, worker, web :3000)
 pnpm dev
 ```
 
-Open http://localhost:3000 — the Bridge shell shows live API + database
-status. API health: http://localhost:4000/health
+Open http://localhost:3000, create an account, and you have a workspace with
+agents. The database is embedded (Postgres compiled to WASM, stored in
+`apps/api/.bridge/data`) and the job queue runs in-process, so there is
+nothing to install, start, or configure.
+
+### Optional: run against Postgres + Redis
+
+For server-shaped development, mirroring a self-hosted deployment:
+
+```bash
+pnpm infra:up      # docker compose: postgres:17, redis:7
+pnpm db:migrate    # server databases migrate as a deploy step
+DATABASE_URL=postgres://bridge:bridge@localhost:5432/bridge \
+REDIS_URL=redis://localhost:6379 pnpm dev
+```
+
+Same schema, same migrations, same code — only the drivers differ (ADR-0009,
+ADR-0010).
+
+## Where Bridge runs
+
+| Mode | Runtime | User-facing infrastructure |
+|---|---|---|
+| **Local desktop** | The user's device, supervised by the Bridge app | None |
+| **Self-hosted server** | A server you run (Docker/Compose or Node) | Yours |
+| **Bridge Cloud** | Bridge infrastructure | None |
+
+An agent's manifest is portable across all three: moving between them is one
+field (`deployment.target`), not a rebuild. Runtime location is independent
+of model location — a locally running agent can still use hosted APIs.
 
 ## Repository layout
 
 ```text
 apps/
-  api/       Control plane — Hono HTTP API
-  worker/    Data plane — BullMQ background workers
+  api/       Control plane — Hono HTTP API (auth, workspaces, agents, providers)
+  worker/    Data plane — background jobs and schedules
   web/       Web client — Vite + React SPA
 packages/
-  spec/      @bridge/spec — Bridge Manifest, dashboard schema, permissions, events, templates
-  sdk/       @bridge/sdk  — provider / tool / channel adapter interfaces
-  core/      @bridge/core — ids, errors, env loading, structured logging
-  db/        @bridge/db   — Drizzle schema, migrations, client
-  ui/        @bridge/ui   — design tokens, brand assets
+  spec/      @bridge/spec  — Bridge Manifest, dashboard schema, permissions, events, templates
+  sdk/       @bridge/sdk   — provider / tool / channel adapter interfaces
+  core/      @bridge/core  — ids, errors, env, logging, crypto
+  db/        @bridge/db    — Drizzle schema, migrations, server + embedded drivers
+  queue/     @bridge/queue — JobQueue interface, BullMQ + in-process drivers
+  ui/        @bridge/ui    — design tokens, brand assets
 docs/architecture/  ADRs
 ```
 
@@ -53,23 +70,27 @@ docs/architecture/  ADRs
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | Run api + worker + web in watch mode |
-| `pnpm test` | Run all tests (db integration test needs `DATABASE_URL`) |
+| `pnpm dev` | Run api (:4000), worker and web (:3000) in watch mode |
+| `pnpm test` | Full test suite (runs against embedded Postgres) |
 | `pnpm typecheck` | Strict TypeScript across the workspace |
 | `pnpm lint` / `pnpm lint:fix` | Biome lint + format |
 | `pnpm build` | Production builds |
-| `pnpm db:generate` | Generate SQL migration from schema changes |
-| `pnpm db:migrate` | Apply migrations |
-| `pnpm infra:up` / `infra:down` | Start/stop local Postgres + Redis |
+| `pnpm db:generate` | Generate SQL migration after editing `schema.ts` |
+| `pnpm db:migrate` | Apply migrations to a server database |
+| `pnpm infra:up` / `infra:down` | Optional Postgres + Redis for server-mode dev |
 
-## Architecture in one paragraph
+## Configuration
 
-Bridge is a TypeScript modular monolith: a control-plane API and a data-plane
-worker sharing one Postgres and one Redis, communicating only through the
-database, queues, and typed events. The canonical artifact is the **Bridge
-Manifest** (`@bridge/spec`) — a versioned, validated, provider-independent
-description of an agent system that templates, manual configuration, and AI
-generation all compile into. Providers, tools, and channels are adapters
-behind `@bridge/sdk` interfaces; permissions are evaluated on every tool
-call; every client (web, CLI, desktop, mobile, channels) consumes the same
-public API. See `ARCHITECTURE.md`.
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `pglite:./.bridge/data` | `postgres://…` for a server, `pglite:<path>` embedded |
+| `REDIS_URL` | unset | Set to use BullMQ; unset runs the queue in-process |
+| `BRIDGE_SECRET_KEY` | generated in dev | Base64 32-byte key encrypting stored credentials. **Required in production** — without a stable key, saved provider keys cannot be decrypted after a restart. Generate with `openssl rand -base64 32`. |
+| `API_PORT` | `4000` | API port |
+
+## Security notes
+
+Passwords are scrypt-hashed with OWASP parameters; session tokens are stored
+only as hashes; provider credentials are encrypted with AES-256-GCM and never
+returned by the API (only a masked hint like `sk-…f4a2`). Every domain table
+is workspace-scoped and cross-tenant access is covered by dedicated tests.

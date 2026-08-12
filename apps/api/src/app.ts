@@ -1,29 +1,29 @@
-import { BridgeError, type Logger } from "@bridge/core";
-import { type Db, pingDb } from "@bridge/db";
+import { BridgeError } from "@bridge/core";
+import { pingDb } from "@bridge/db";
 import { SPEC_VERSION, safeParseManifest } from "@bridge/spec";
 import { Hono } from "hono";
+import { agentRoutes, templateRoutes } from "./agents.js";
+import { authRoutes } from "./auth.js";
+import type { AppDeps, AppEnv } from "./http.js";
+import { providerRoutes } from "./providers.js";
+import { workspaceRoutes } from "./workspaces.js";
 
-export interface AppDeps {
-  logger: Logger;
-  /** Absent when the API runs without a database (degraded, health reports it). */
-  db?: Db;
-}
-
-export const API_VERSION = "0.1.0";
+export const API_VERSION = "0.2.0";
 
 /**
  * Route layer only: validate, call domain modules, serialize (ADR-0005).
- * Domain logic lands in Phase 2+ modules, never in routes.
+ * Every client — web, CLI, desktop, mobile, channels — uses exactly these
+ * endpoints; none of them get a private path into the domain.
  */
-export function buildApp({ logger, db }: AppDeps) {
-  const app = new Hono();
+export function buildApp(deps: AppDeps) {
+  const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
     const requestId = crypto.randomUUID();
     c.header("x-request-id", requestId);
     const start = performance.now();
     await next();
-    logger.info(
+    deps.logger.info(
       {
         requestId,
         method: c.req.method,
@@ -36,19 +36,15 @@ export function buildApp({ logger, db }: AppDeps) {
   });
 
   app.get("/health", async (c) => {
-    let dbStatus: "up" | "down" | "unconfigured" = "unconfigured";
-    if (db) {
-      try {
-        await pingDb(db);
-        dbStatus = "up";
-      } catch {
-        dbStatus = "down";
-      }
+    let db: "up" | "down" = "up";
+    try {
+      await pingDb(deps.db);
+    } catch {
+      db = "down";
     }
-    const healthy = dbStatus !== "down";
     return c.json(
-      { status: healthy ? "ok" : "degraded", version: API_VERSION, checks: { db: dbStatus } },
-      healthy ? 200 : 503,
+      { status: db === "up" ? "ok" : "degraded", version: API_VERSION, checks: { db } },
+      db === "up" ? 200 : 503,
     );
   });
 
@@ -77,6 +73,12 @@ export function buildApp({ logger, db }: AppDeps) {
     return c.json({ valid: true, manifest: result.data });
   });
 
+  app.route("/v1/auth", authRoutes(deps));
+  app.route("/v1/templates", templateRoutes());
+  app.route("/v1/workspaces", workspaceRoutes(deps));
+  app.route("/v1/workspaces/:workspaceId/agents", agentRoutes(deps));
+  app.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
+
   app.notFound((c) =>
     c.json({ error: { code: "not_found", message: `no route for ${c.req.path}` } }, 404),
   );
@@ -88,7 +90,7 @@ export function buildApp({ logger, db }: AppDeps) {
         err.httpStatus as 400,
       );
     }
-    logger.error({ err }, "unhandled error");
+    deps.logger.error({ err }, "unhandled error");
     return c.json({ error: { code: "internal", message: "internal error" } }, 500);
   });
 

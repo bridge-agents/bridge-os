@@ -12,13 +12,16 @@
   "dependencies": {
     "@bridge/core": "workspace:*",
     "@bridge/db": "workspace:*",
+    "@bridge/queue": "workspace:*",
     "@bridge/spec": "workspace:*",
     "@hono/node-server": "^1.14.0",
+    "drizzle-orm": "^0.44.0",
     "hono": "^4.7.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "pino": "^9.6.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

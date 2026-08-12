@@ -20,6 +20,9 @@ export {
   type AgentDef,
   AgentDefSchema,
   ChannelBindingSchema,
+  DeploymentSchema,
+  type DeploymentTarget,
+  DeploymentTargetSchema,
   EventTriggerSchema,
   type Manifest,
   ManifestSchema,
@@ -42,4 +45,13 @@ export {
   PermissionRuleSchema,
 } from "./permissions.js";
 export { type Template, TemplateSchema } from "./template.js";
-export { personalAssistantTemplate } from "./templates/personal-assistant.js";
+export {
+  blankManifest,
+  getTemplate,
+  instantiateTemplate,
+  personalAssistantTemplate,
+  researchAgentTemplate,
+  slugify,
+  softwareTeamTemplate,
+  templates,
+} from "./templates/index.js";

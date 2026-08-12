@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@bridge/core": "workspace:*",
+    "@electric-sql/pglite": "^0.5.4",
     "drizzle-orm": "^0.44.0",
     "postgres": "^3.4.5"
   },

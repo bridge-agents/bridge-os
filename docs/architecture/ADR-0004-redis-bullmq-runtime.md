@@ -1,6 +1,12 @@
 # ADR-0004: Redis + BullMQ for queues; runs are durable queued jobs, not resident processes
 
-Status: accepted (2026-08-12)
+Status: accepted (2026-08-12); **amended by [ADR-0010](ADR-0010-queue-drivers.md)**
+
+> Amendment: Redis is now the *server and Cloud* driver, not a universal
+> requirement. ADR-0010 puts both drivers behind one `JobQueue` interface so a
+> desktop install runs the queue in-process. The load-bearing decision below —
+> that a run is durable state in Postgres and the queue is only dispatch — is
+> exactly what makes that substitution safe, and is unchanged.
 
 ## Context
 Agents must run long, in the background, on schedules, survive UI closes and

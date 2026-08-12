@@ -7,3 +7,6 @@ coverage/
 .env.local
 .DS_Store
 .context/
+
+# Embedded database created by local runs
+.bridge/

@@ -59,6 +59,23 @@ export const ChannelBindingSchema = z.object({
   config: z.record(z.string(), z.unknown()).prefault({}),
 });
 
+/**
+ * Where the agent executes. This is the ONLY target-specific field in a
+ * manifest: everything else is portable, so "Run on this device" → "Move to
+ * Bridge Cloud" is a one-field change, not a recreation (ADR-0008).
+ */
+export const DeploymentTargetSchema = z.enum(["local", "self-hosted", "cloud"]);
+export type DeploymentTarget = z.infer<typeof DeploymentTargetSchema>;
+
+export const DeploymentSchema = z.object({
+  target: DeploymentTargetSchema.default("local"),
+  /**
+   * Whether the agent keeps running when the Bridge window is closed.
+   * Honoured by the desktop runtime subject to OS limits and user settings.
+   */
+  background: z.boolean().default(false),
+});
+
 export const RuntimeConfigSchema = z.object({
   limits: z
     .object({
@@ -110,6 +127,7 @@ export const ManifestSchema = z
       })
       .prefault({}),
     channels: z.array(ChannelBindingSchema).default([]),
+    deployment: DeploymentSchema.prefault({}),
     runtime: RuntimeConfigSchema.prefault({}),
     dashboard: DashboardSchema.optional(),
   })

@@ -24,6 +24,23 @@ describe("ManifestSchema", () => {
     expect(manifest.runtime.limits.maxConcurrentRuns).toBe(1);
     expect(manifest.runtime.sandbox.network).toBe("restricted");
     expect(manifest.tools).toEqual([]);
+    // Consumer default: runs on the user's own device, foreground only.
+    expect(manifest.deployment).toEqual({ target: "local", background: false });
+  });
+
+  it("moves between deployment targets without any other change", () => {
+    const local = parseManifest(valid());
+    const cloud = parseManifest({ ...local, deployment: { target: "cloud", background: true } });
+    const { deployment: _local, ...localRest } = local;
+    const { deployment: _cloud, ...cloudRest } = cloud;
+    expect(cloudRest).toEqual(localRest);
+    expect(cloud.deployment.target).toBe("cloud");
+  });
+
+  it("rejects unknown deployment targets", () => {
+    expect(
+      safeParseManifest({ ...valid(), deployment: { target: "someones-laptop" } }).success,
+    ).toBe(false);
   });
 
   it("rejects unknown entryAgent", () => {

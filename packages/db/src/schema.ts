@@ -30,8 +30,25 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
+  /** scrypt hash; null for accounts authenticated by a Cloud identity provider. */
+  passwordHash: text("password_hash"),
   createdAt,
 });
+
+/** Only the hash of a session token is stored, so a database leak yields no usable sessions. */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull().unique(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt,
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
 
 export const workspaceMembers = pgTable(
   "workspace_members",
@@ -90,6 +107,44 @@ export const runs = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
   (t) => [index("runs_workspace_agent_idx").on(t.workspaceId, t.agentId)],
+);
+
+/**
+ * Encrypted credentials. `ciphertext` is AES-256-GCM (see @bridge/core
+ * crypto); plaintext never touches this table, the API, or the logs. On
+ * desktop the same rows may instead hold a keychain reference (ADR-0011).
+ */
+export const secrets = pgTable(
+  "secrets",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    /** Recognisable fragment for the UI, e.g. "sk-…f4a2". Never enough to use. */
+    hint: text("hint"),
+    createdAt,
+  },
+  (t) => [unique().on(t.workspaceId, t.name)],
+);
+
+export const providerConfigs = pgTable(
+  "provider_configs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** Adapter id referenced by Manifest ModelRefs, e.g. "anthropic". */
+    provider: text("provider").notNull(),
+    secretId: text("secret_id").references(() => secrets.id, { onDelete: "set null" }),
+    /** For OpenAI-compatible and local endpoints (Ollama, LM Studio, proxies). */
+    baseUrl: text("base_url"),
+    createdAt,
+  },
+  (t) => [unique().on(t.workspaceId, t.provider)],
 );
 
 /** Append-only audit/event log; see @bridge/spec events for the type catalog. */

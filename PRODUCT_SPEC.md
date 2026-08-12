@@ -153,17 +153,74 @@ page structure via **design tokens** — never the Bridge logo, name, core
 iconography, or underlying design language. Every dashboard immediately feels
 like Bridge.
 
-## 12. Open Core
+## 12. Open Core and Deployment Modes
 
-**Bridge Community (self-hosted):** agent runtime, agent builder, templates,
-model adapters, MCP, tools, memory, chat, terminal, dashboards, local
-deployment (`docker compose up`), logs, basic observability. Genuinely useful
-standalone.
+Bridge is one product that can run in three places. The agent is the same in
+all of them; only where it executes differs (ADR-0008).
 
-**Bridge Cloud (managed):** same core + hosted runtime, managed
-Postgres/queues, secure secrets, backups, remote access, managed sandboxes,
-auth, teams, cloud deployment, auto-updates, metering, billing, enhanced
-observability. Community runtime is never coupled to Cloud.
+### Local Desktop Mode — Bridge Community
+
+The consumer experience. A user downloads `Bridge.dmg`, a Windows installer,
+or a Linux package, opens the app, and goes through the same polished flow a
+Cloud user gets: onboarding → create agent → template or blank → customise →
+connect providers → tools/MCP → permissions → chat or dashboard → run.
+
+**Bridge manages its own local runtime.** A normal user never installs
+Docker, runs `docker compose`, starts Postgres or Redis, configures ports, or
+opens a terminal. The database is embedded, the queue is in-process, and the
+desktop app owns the runtime lifecycle. "Self-hosted" must never be read as
+"the user operates infrastructure".
+
+Because agents may need to work while the window is closed, the desktop
+runtime supports background operation subject to OS limits, user settings,
+permissions, battery and security — with an explicit user control for whether
+Bridge may run in the background, and clear agent status: running, paused,
+stopped, waiting, or offline.
+
+### Self-Hosted Server Mode — Bridge Community
+
+For developers, homelabs, VPSs, Linux servers and organisations. Deploy
+Bridge yourself, with Docker/Compose or bare Node; desktop, mobile, web and
+CLI clients connect to that instance. `docker compose up` remains a
+first-class development and advanced self-hosting path — it is simply not a
+consumer requirement.
+
+### Bridge Cloud Mode — managed
+
+Bridge operates the runtime and infrastructure: hosted runtime, managed
+Postgres/queues, KMS-backed secrets, backups, remote access, managed
+sandboxes, auth, teams, deployment, auto-updates, metering, billing, enhanced
+observability.
+
+Cloud sells **availability, managed infrastructure, remote execution,
+backups, collaboration, sandboxes, scale and convenience** — never access to
+core agent functionality withheld from Community. A local user should see an
+honest prompt like "this agent only runs while your computer is available;
+run it 24/7 with Bridge Cloud", not a crippled product.
+
+### Portability
+
+An agent's Manifest is portable across all three targets, so "Run locally"
+can later become "Move to Bridge Cloud" without recreating anything, and
+users can export their configuration and leave Cloud for self-hosting. Avoid
+vendor lock-in in both directions.
+
+**Runtime location ≠ model location.** A locally running Bridge agent can use
+Anthropic, OpenAI, or a model on the same machine — any combination the user
+configures.
+
+### Mobile
+
+Mobile platforms cannot offer unrestricted background execution, so the
+mobile app is primarily a control surface for a runtime running elsewhere
+(desktop, self-hosted server, or Cloud), plus whatever local capability the
+OS genuinely allows. Bridge does not promise 24/7 on-device mobile execution.
+
+### Local secrets
+
+On desktop, provider credentials use secure OS facilities (platform
+keychain/credential store) wherever possible. API keys are never stored as
+casual plaintext in application files.
 
 ## 13. API Philosophy
 
@@ -175,7 +232,7 @@ lives in UI components or individual clients.
 
 The first genuinely useful release lets a user:
 
-1. Run Bridge locally
+1. Run Bridge locally (installed app, no infrastructure setup)
 2. Create an account/workspace
 3. Connect ≥1 model provider
 4. Create an agent from template or blank
@@ -189,6 +246,7 @@ The first genuinely useful release lets a user:
 12. Stop/restart it
 13. View basic logs and usage
 14. Optionally create a simple dashboard
+15. Choose where the agent runs (this device / self-hosted / Cloud)
 
 Everything else grows from that.
 
