@@ -97,14 +97,13 @@ describe("login", () => {
         json({ email: "target@example.com", password: "wrong-guess-here" }),
       );
 
-    let limited = false;
-    for (let i = 0; i < 15; i++) {
-      if ((await attempt()).status === 429) {
-        limited = true;
-        break;
-      }
-    }
-    expect(limited).toBe(true);
+    // Fired together rather than in sequence: the limiter's window is
+    // wall-clock, and password hashing is slow enough under a loaded test run
+    // that serial attempts can straddle it.
+    const statuses = await Promise.all(Array.from({ length: 15 }, attempt)).then((all) =>
+      all.map((res) => res.status),
+    );
+    expect(statuses).toContain(429);
   });
 });
 

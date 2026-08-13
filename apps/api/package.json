@@ -10,17 +10,18 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@bridge/channels": "workspace:*",
     "@bridge/core": "workspace:*",
     "@bridge/db": "workspace:*",
+    "@bridge/providers": "workspace:*",
     "@bridge/queue": "workspace:*",
+    "@bridge/runtime": "workspace:*",
+    "@bridge/sdk": "workspace:*",
     "@bridge/spec": "workspace:*",
     "@hono/node-server": "^1.14.0",
     "drizzle-orm": "^0.44.0",
     "hono": "^4.7.0",
-    "zod": "^4.0.0",
-    "@bridge/runtime": "workspace:*",
-    "@bridge/providers": "workspace:*",
-    "@bridge/sdk": "workspace:*"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

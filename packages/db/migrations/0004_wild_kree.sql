@@ -1,0 +1,2 @@
+ALTER TABLE "conversations" ADD COLUMN "external_id" text;--> statement-breakpoint
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_agent_id_external_id_unique" UNIQUE("agent_id","external_id");

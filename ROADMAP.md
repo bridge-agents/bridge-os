@@ -1,7 +1,7 @@
 # Bridge Agent OS — Roadmap
 
-Phases 0–4 are **complete**: architecture, foundation, accounts, the agent
-runtime, and tools/permissions/approvals. Phase 5 is next. Each phase lists
+Phases 0–5 are **complete**: architecture, foundation, accounts, the agent
+runtime, tools/permissions/approvals, and chat/CLI/channels. Phase 6 is next. Each phase lists
 objective, dependencies, deliverables, acceptance criteria, tests, and risks.
 
 Ordering is intentional: every phase leaves a runnable, testable system.
@@ -98,7 +98,7 @@ real agent loops.
 
 **Deferred from this phase**
 - Streaming into the UI: adapters implement `stream()` for text, but the loop
-  uses `complete()` and the web client polls. Phase 5 wires SSE through.
+  uses `complete()` and the web client polls. Phase 5 wired SSE through.
 - Long-term memory and knowledge: `memory.longTerm`/`knowledge` are honoured
   in the spec but only conversation history is implemented.
 - Real tools: the loop consults permissions and records the attempt, then
@@ -167,37 +167,47 @@ real agent loops.
 
 ---
 
-## Phase 5 — Chat, Terminal and Channels ← NEXT
+## Phase 5 — Chat, Terminal and Channels ✅ COMPLETE
 
 **Objective:** Bridge Chat, Bridge CLI, and the channel framework.
 
-**Depends on:** Phases 3 and 4 (complete). Approval cards have a backing API
-and queue already; chat needs streaming wired through the loop.
+**Delivered**
+- Streaming end to end: `Provider.streamComplete()` on the Anthropic and
+  OpenAI-compatible adapters, deltas through the agent loop, and
+  `GET /v1/workspaces/:id/runs/:runId/stream` (SSE) carrying deltas, run
+  steps and status. The endpoint reads deltas from an in-process bus *and*
+  polls `run_steps`, so it is correct with a separate worker and live in
+  embedded mode.
+- Bridge Chat (web): agent selection, streamed answers, tool activity from
+  `run_steps`, approval cards that resume the paused run in place, and
+  conversation replay via `?agent=&conversation=`.
+- Bridge CLI (`apps/cli`): `login`, `status`, `agent list|run`, `chat`,
+  `runs`, `logs`, `approvals`, `approve`, `deny` — all against the public
+  API with token auth, config in `~/.bridge/config.json` (mode 0600).
+- Channel framework (`@bridge/channels`): `ChannelRunner` maps an inbound
+  message to a conversation (`conversations.external_id`) and an ordinary
+  run with trigger `channel`; `ChannelManager` starts bindings for deployed
+  agents and stops them when an agent is undeployed. Telegram (long polling,
+  works behind NAT) and Discord (gateway websocket, no dependency) adapters.
+- Workspace secrets API and UI, so a channel binding names a token
+  (`config.tokenSecret`) instead of embedding one in a portable manifest.
 
-**Deliverables**
-- Bridge Chat (web): conversations, streaming messages (SSE), files, agent
-  selection/switching, tool activity, task state, approval cards, run status.
-- Bridge CLI (`apps/cli`): `bridge chat`, `bridge agent list|run`, `bridge
-  status`, `bridge logs`, `bridge task list` against the public API with
-  token auth. First-class client, no private endpoints.
-- Channel framework: `@bridge/sdk` Channel implementations for Telegram and
-  Discord; inbound → runtime tasks, outbound ← typed events. Architecture
-  ready for iMessage/Slack.
+**Acceptance criteria — met**
+- Web chat and CLI drive an agent end to end through public endpoints only.
+- A channel user converses with a deployed agent; the channel packages
+  contain no runtime logic, only adapter calls and one enqueue.
 
-**Acceptance criteria**
-- Full agent interaction from web chat and CLI without touching internals;
-  a Telegram user can converse with a deployed agent; channel code contains
-  zero runtime logic (only adapter calls).
+**Tests:** 247 across the workspace — SSE streaming integration, CLI routed
+through the real Hono app, channel runner/manager/Telegram against fakes.
 
-**Tests:** SSE streaming integration, CLI e2e against local API, channel
-adapter contract tests with fake transports.
-
-**Risks:** streaming edge cases (reconnect/resume — use run checkpoints);
-channel rate limits (queue outbound sends).
+**Known ceilings:** the run bus is in-process (cross-process streaming needs
+Redis pub/sub); channel replies poll the runs table; the Discord adapter
+re-identifies rather than resuming a session; outbound sends are not rate
+limited beyond message splitting.
 
 ---
 
-## Phase 6 — Dashboard Builder
+## Phase 6 — Dashboard Builder ← NEXT
 
 **Objective:** Render, template, and AI-edit dashboards from the schema.
 

@@ -65,7 +65,8 @@ of model location — a locally running agent can still use hosted APIs.
 apps/
   api/       Control plane — Hono HTTP API (auth, workspaces, agents, runs, architect)
   worker/    Data plane — hosts the run executor for server deployments
-  web/       Web client — Vite + React SPA
+  web/       Web client — Vite + React SPA (agents, chat, approvals, providers)
+  cli/       `bridge` command line — same public API, bearer tokens
 packages/
   spec/      @bridge/spec      — Bridge Manifest, dashboard schema, permissions, events, templates
   sdk/       @bridge/sdk       — provider / tool / channel adapter interfaces
@@ -74,6 +75,7 @@ packages/
   queue/     @bridge/queue     — JobQueue interface, BullMQ + in-process drivers
   providers/ @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing
   runtime/   @bridge/runtime   — compiler, agent loop, executor, tools, MCP, sandbox
+  channels/  @bridge/channels  — Telegram + Discord adapters; inbound message → run
   ui/        @bridge/ui        — design tokens, brand assets
 docs/architecture/  ADRs
 ```

@@ -1,7 +1,8 @@
+import { ChannelManager } from "@bridge/channels";
 import { createLogger, loadEnv, parseSecretKey } from "@bridge/core";
 import { createDb, isEmbeddedUrl } from "@bridge/db";
 import { createQueue } from "@bridge/queue";
-import { providerResolver, RunExecutor } from "@bridge/runtime";
+import { EncryptedDbSecretStore, providerResolver, RunExecutor } from "@bridge/runtime";
 import { z } from "zod";
 import { processJob, RUNS_QUEUE } from "./jobs.js";
 
@@ -36,12 +37,22 @@ if (!env.BRIDGE_SECRET_KEY) {
 }
 
 const database = await createDb(env.DATABASE_URL);
+const secretKey = parseSecretKey(env.BRIDGE_SECRET_KEY);
 const executor = new RunExecutor({
   db: database.db,
   logger,
-  getProvider: providerResolver(database.db, parseSecretKey(env.BRIDGE_SECRET_KEY)),
+  getProvider: providerResolver(database.db, secretKey),
 });
 executor.start();
+
+// Inbound channel messages become ordinary runs; see @bridge/channels.
+const channels = new ChannelManager({
+  db: database.db,
+  logger,
+  secretStore: new EncryptedDbSecretStore(database.db, secretKey),
+});
+const channelRefresh = setInterval(() => void channels.refresh().catch(() => undefined), 60_000);
+await channels.refresh().catch((err) => logger.error({ err }, "channel startup failed"));
 
 // Scheduled jobs stay on the queue driver; runs are claimed from the database.
 const queue = createQueue(env.REDIS_URL, {
@@ -60,6 +71,8 @@ logger.info(
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
     logger.info({ signal }, "shutting down");
+    clearInterval(channelRefresh);
+    await channels.stop();
     await executor.stop();
     await queue.close();
     await database.close();

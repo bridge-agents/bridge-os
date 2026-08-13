@@ -96,9 +96,18 @@ export const conversations = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
     title: text("title"),
+    /**
+     * Stable key for a thread that lives outside Bridge, e.g.
+     * "telegram:12345". How a channel finds the same conversation again after
+     * a restart instead of starting the agent over on every message.
+     */
+    externalId: text("external_id"),
     createdAt,
   },
-  (t) => [index("conversations_workspace_agent_idx").on(t.workspaceId, t.agentId)],
+  (t) => [
+    index("conversations_workspace_agent_idx").on(t.workspaceId, t.agentId),
+    unique().on(t.agentId, t.externalId),
+  ],
 );
 
 /** Conversation history — the durable record the runtime replays into a model. */

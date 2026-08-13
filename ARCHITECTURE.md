@@ -81,6 +81,7 @@ apps/
   api/          Control plane: Hono HTTP API (ADR-0005)
   worker/       Runtime host for server deployments; scheduled jobs (ADR-0012)
   web/          Web client: Vite + React SPA, thin (ADR-0006)
+  cli/          `bridge` command line — a client of the same public API
 packages/
   spec/         @bridge/spec   — Manifest, dashboard schema, permissions, events, templates (ADR-0002)
   sdk/          @bridge/sdk    — provider / tool / channel adapter interfaces (ADR-0007)
@@ -89,6 +90,7 @@ packages/
   queue/        @bridge/queue  — JobQueue interface, BullMQ + in-process drivers (ADR-0010)
   providers/    @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing, registry
   runtime/      @bridge/runtime   — compiler, agent loop, executor, tools, MCP, sandbox (ADR-0012, ADR-0013)
+  channels/     @bridge/channels  — Telegram + Discord adapters, inbound message → run (ADR-0007)
   ui/           @bridge/ui     — design tokens (CSS variables), brand assets, base styles
 docs/
   architecture/ ADR-*.md
@@ -248,14 +250,21 @@ final enough to build on; delivery infrastructure grows in Phases 8–9.
 
 Three small interfaces keep vendors and integrations at the edge:
 
-- **Provider**: `complete()` / `stream()` over normalized messages and tool
-  calls, returns normalized usage (tokens) for cost tracking. A `MockProvider`
+- **Provider**: `complete()` / `streamComplete()` over normalized messages and
+  tool calls, returns normalized usage (tokens) for cost tracking.
+  `streamComplete()` reports text as it arrives *and* resolves to the same
+  result `complete()` would, so tool calls survive streaming. A `MockProvider`
   ships for tests.
 - **Tool**: name, description, Zod input schema, declared actions with
   `dangerous` flags, `execute(input, ctx)`; ctx carries workspace/agent/run
   ids, a logger, and a permission check.
 - **Channel**: lifecycle (`start`/`stop`) + `send()` + inbound message
   handler. Runtime knows only this interface, never Telegram/Discord APIs.
+  `@bridge/channels` binds one to an agent: a message resolves to a
+  conversation by `conversations.external_id` and becomes an ordinary run with
+  trigger `channel`, so approvals, tools, costs and the run inspector work
+  unchanged. Bindings name a secret (`config.tokenSecret`) rather than
+  carrying a bot token, because manifests are portable and shareable.
 
 ## 9. Data Model
 

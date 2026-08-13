@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { AgentDetail } from "./routes/AgentDetail.jsx";
 import { Agents } from "./routes/Agents.jsx";
 import { Approvals } from "./routes/Approvals.jsx";
+import { Chat } from "./routes/Chat.jsx";
 import { Providers } from "./routes/Providers.jsx";
 import { SignIn } from "./routes/SignIn.jsx";
 import { SessionProvider, useSession } from "./session.jsx";
@@ -75,6 +76,9 @@ function Shell() {
           </div>
 
           <nav className="flex items-center gap-1">
+            <NavLink to="/chat" className={navLink}>
+              Chat
+            </NavLink>
             <NavLink to="/agents" className={navLink}>
               Agents
             </NavLink>
@@ -122,11 +126,12 @@ function Shell() {
 
       <main className="mx-auto max-w-5xl px-6 py-8">
         <Routes>
+          <Route path="/chat" element={<Chat />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/:agentId" element={<AgentDetail />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/providers" element={<Providers />} />
-          <Route path="*" element={<Navigate to="/agents" replace />} />
+          <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </main>
     </div>

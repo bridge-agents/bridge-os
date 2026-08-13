@@ -70,6 +70,11 @@ export interface ProviderConfig {
   baseUrl: string | null;
   keyHint: string | null;
 }
+export interface SecretRef {
+  id: string;
+  name: string;
+  hint: string | null;
+}
 export interface Manifest {
   meta: { name: string; slug: string; description?: string };
   agents: { name: string; instructions: string }[];
@@ -194,12 +199,82 @@ export const api = {
       { instruction },
     ),
 
+  conversation: (workspaceId: string, conversationId: string) =>
+    get<{
+      conversation: { id: string; title: string | null };
+      messages: { id: string; role: string; content: string }[];
+    }>(`/v1/workspaces/${workspaceId}/conversations/${conversationId}`),
+
+  /**
+   * Follow a run's SSE stream. Resolves when the run reaches a terminal state
+   * or parks for approval; the callbacks fire as events arrive.
+   */
+  streamRun: async (
+    workspaceId: string,
+    runId: string,
+    handlers: {
+      onDelta: (text: string) => void;
+      onStep: (step: { type: string; data: unknown }) => void;
+      onStatus: (status: string, output: { content?: string } | null) => void;
+    },
+  ): Promise<void> => {
+    const res = await fetch(`/api/v1/workspaces/${workspaceId}/runs/${runId}/stream`, {
+      credentials: "include",
+    });
+    if (!res.ok || !res.body)
+      throw new BridgeApiError(res.status, {
+        code: "internal",
+        message: "could not open the run stream",
+      });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Frames are blank-line separated; keep the trailing partial frame.
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const event = frame.match(/^event:\s*(.+)$/m)?.[1];
+        const raw = frame.match(/^data:\s*(.+)$/m)?.[1];
+        if (!event || !raw) continue;
+
+        try {
+          const data = JSON.parse(raw) as Record<string, unknown>;
+          if (event === "delta") handlers.onDelta(String(data.text ?? ""));
+          else if (event === "step") {
+            handlers.onStep({ type: String(data.type), data: data.data });
+          } else if (event === "status") {
+            handlers.onStatus(
+              String(data.status),
+              (data.output ?? null) as { content?: string } | null,
+            );
+          }
+        } catch {
+          // Ignore anything that is not a JSON payload.
+        }
+      }
+    }
+  },
+
   approvals: (workspaceId: string, status = "pending") =>
     get<{ approvals: Approval[] }>(`/v1/workspaces/${workspaceId}/approvals?status=${status}`),
   approve: (workspaceId: string, approvalId: string) =>
     send<unknown>("POST", `/v1/workspaces/${workspaceId}/approvals/${approvalId}/approve`),
   deny: (workspaceId: string, approvalId: string, reason?: string) =>
     send<unknown>("POST", `/v1/workspaces/${workspaceId}/approvals/${approvalId}/deny`, { reason }),
+
+  secrets: (workspaceId: string) =>
+    get<{ secrets: SecretRef[] }>(`/v1/workspaces/${workspaceId}/secrets`),
+  putSecret: (workspaceId: string, name: string, value: string) =>
+    send<{ secret: SecretRef }>("PUT", `/v1/workspaces/${workspaceId}/secrets`, { name, value }),
+  deleteSecret: (workspaceId: string, secretId: string) =>
+    send<void>("DELETE", `/v1/workspaces/${workspaceId}/secrets/${secretId}`),
 
   providers: (workspaceId: string) =>
     get<{ providers: ProviderConfig[] }>(`/v1/workspaces/${workspaceId}/providers`),

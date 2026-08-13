@@ -1,7 +1,7 @@
 # HANDOFF — Bridge Agent OS
 
-**Phases 0–4 are complete. The next phase is Phase 5 — Chat, Terminal and
-Channels.**
+**Phases 0–5 are complete. The next phase is Phase 6 — the Dashboard
+Builder.**
 
 Read in this order before writing code:
 
@@ -9,7 +9,7 @@ Read in this order before writing code:
 2. `PRODUCT_SPEC.md` — what Bridge is, the three deployment modes, the MVP
 3. `ARCHITECTURE.md` — system design, boundaries, data model
 4. `docs/architecture/ADR-0001..0013` — decisions and their reasons
-5. `ROADMAP.md` — Phase 5 onward with acceptance criteria
+5. `ROADMAP.md` — Phase 6 onward with acceptance criteria
 
 ---
 
@@ -159,10 +159,17 @@ into every dispatch (with dangerous actions requiring an explicit allow), and
 approvals — a run suspends anywhere including inside a subagent, checkpoints
 its frame stack, and resumes from the exact call once decided.
 
-**Not implemented (Phase 5+):** streaming into the UI, Bridge Chat, the CLI,
-channels, the dashboard renderer, schedules/triggers, deeper observability,
-and desktop packaging. Per-agent credential scoping and container-level
-sandbox isolation are deferred with reasons in `ROADMAP.md` Phase 4.
+Working on top of Phase 4: streaming from the adapters through the loop to an
+SSE endpoint, Bridge Chat in the web app, the `bridge` CLI as a first-class
+client of the same public API, and `@bridge/channels` — a channel adapter
+framework with Telegram (long polling) and Discord (gateway websocket)
+implementations, plus the workspace secrets API a channel binding needs.
+
+**Not implemented (Phase 6+):** the dashboard renderer, schedules/triggers,
+deeper observability, and desktop packaging. Per-agent credential scoping and
+container-level sandbox isolation are deferred with reasons in `ROADMAP.md`
+Phase 4; the Phase 5 ceilings (in-process run bus, polled channel replies,
+Discord session resume) are listed in `ROADMAP.md` Phase 5.
 
 ## 8. Architectural invariants (violating these = redesign, don't)
 
@@ -204,34 +211,33 @@ sandbox isolation are deferred with reasons in `ROADMAP.md` Phase 4.
 - Enforce `runtime.limits` (token/spend budgets) as soon as real runs exist.
   Runaway autonomous spend is a product-killing bug.
 
-## 10. Phase 5 instructions (your next phase)
+## 10. Phase 6 instructions (your next phase)
 
-Objective: Bridge Chat, the CLI, and the channel framework. Full criteria in
-`ROADMAP.md`.
+Objective: the dashboard builder. Full criteria in `ROADMAP.md`.
 
-1. **Streaming.** The adapters already implement `stream()` for text. Thread it
-   through the loop (an `onDelta` in `LoopDeps`), persist deltas or forward
-   them, and expose SSE at `GET /v1/workspaces/:id/runs/:runId/stream`. Note
-   the loop calls `complete()` for tool-use turns — stream the text turns and
-   keep tool turns buffered rather than rewriting the dispatch path.
-2. **Bridge Chat** on the existing conversation endpoints: streamed messages,
-   agent switching, tool activity from `run_steps`, run status, and approval
-   cards wired to `/approvals` (the API and queue already exist).
-3. **Bridge CLI** (`apps/cli`) against the public API with bearer tokens:
-   `bridge chat`, `bridge agent list|run`, `bridge status`, `bridge logs`,
-   `bridge approvals`. It must use only documented endpoints — if the CLI
-   needs something the web app has, that is a missing public endpoint.
-4. **Channel framework**: implement `@bridge/sdk` `Channel` for Telegram and
-   Discord; inbound messages create runs, outbound comes from run output. Keep
-   channel code out of the runtime.
+The dashboard **schema already exists** (`packages/spec/src/dashboard.ts`) and
+manifests carry an optional `dashboard`; nothing renders it yet. Phase 6 is a
+widget registry mapping schema widget types to React components, data sources
+bound to `/v1` endpoints, a layout engine, the four templates as data, and the
+Architect editing dashboards the way it already edits agents.
 
-Definition of done: a user holds a full conversation with an agent from the
-web and from the CLI, sees tool activity and approves actions inline, and a
-Telegram user can talk to a deployed agent — all with no Docker running.
+Things Phase 5 leaves you that Phase 6 will want:
+
+- `GET /v1/workspaces/:id/runs/:runId/stream` (SSE) for anything live, and
+  `runBus` in `@bridge/runtime` for in-process fan-out.
+- `apps/web/src/api.ts` is the only place the web client talks to the server;
+  add endpoints there, never fetch inline from a component.
+- Workspace secrets (`/v1/workspaces/:id/secrets`) for any data source that
+  needs a credential — names in manifests, values in the store.
+
+Definition of done for Phase 5 (met, keep it working): a user holds a full
+conversation with an agent from the web and from the CLI, sees tool activity
+and approves actions inline, and a channel user talks to a deployed agent —
+all with no Docker running.
 
 ## 11. Remaining roadmap
 
-Phase 5 chat/CLI/channels → 6 dashboards → **7 desktop app + local runtime
+Phase 6 dashboards → **7 desktop app + local runtime
 packaging (the consumer installer, keychain secrets, background operation) +
 mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 Cloud
 → 12 hardening. Details in `ROADMAP.md`.
@@ -240,9 +246,14 @@ mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 
 
 - Event `data` payloads are open records; define per-type payload schemas as
   each emitter lands.
-- Streaming: adapters implement `stream()` for text only (no tool-call
-  deltas); the loop uses `complete()` and the web client polls. Phase 5 wires
-  SSE end to end and will want tool-call streaming then.
+- Streaming: text deltas reach the UI, but tool-call arguments are still
+  assembled before dispatch (no tool-call deltas), and the run bus is
+  in-process — a browser streaming from an API host that is not the worker
+  gets steps and status from the database poll, not live deltas. Cross-process
+  fan-out wants Redis pub/sub behind the same `RunEvent` interface.
+- Channel replies poll the runs table rather than subscribing; outbound sends
+  are split to the platform limit but not rate limited; the Discord adapter
+  reconnects with a fresh IDENTIFY instead of resuming a session.
 - Long-term memory and knowledge are spec-only; only conversation history is
   implemented. `memory.longTerm`/`knowledge` flags are carried but unused.
 - Sandboxing is process-level (path confinement, argument vectors, a minimal

@@ -9,6 +9,7 @@ import { authRoutes } from "./auth.js";
 import type { AppDeps, AppEnv } from "./http.js";
 import { providerRoutes } from "./providers.js";
 import { runRoutes } from "./runs.js";
+import { secretRoutes } from "./secrets.js";
 import { streamRoutes } from "./stream.js";
 import { workspaceRoutes } from "./workspaces.js";
 
@@ -82,6 +83,7 @@ export function buildApp(deps: AppDeps) {
   app.route("/v1/workspaces", workspaceRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/agents", agentRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
+  app.route("/v1/workspaces/:workspaceId/secrets", secretRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/approvals", approvalRoutes(deps));
   app.route("/v1/workspaces/:workspaceId", streamRoutes(deps));

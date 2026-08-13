@@ -20,6 +20,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@bridge/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
       '@bridge/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -140,6 +143,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@bridge/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels
       '@bridge/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -165,6 +171,37 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.23.12
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
+
+  packages/channels:
+    dependencies:
+      '@bridge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@bridge/db':
+        specifier: workspace:*
+        version: link:../db
+      '@bridge/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      '@bridge/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@bridge/spec':
+        specifier: workspace:*
+        version: link:../spec
+      drizzle-orm:
+        specifier: ^0.44.0
+        version: 0.44.7(@electric-sql/pglite@0.5.4)(postgres@3.4.9)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

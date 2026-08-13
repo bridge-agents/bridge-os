@@ -1,6 +1,7 @@
+import { ChannelManager } from "@bridge/channels";
 import { createLogger, generateSecretKey, loadEnv, parseSecretKey } from "@bridge/core";
 import { createDb, isEmbeddedUrl } from "@bridge/db";
-import { providerResolver, RunExecutor } from "@bridge/runtime";
+import { EncryptedDbSecretStore, providerResolver, RunExecutor } from "@bridge/runtime";
 import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { buildApp } from "./app.js";
@@ -60,6 +61,23 @@ const executor = hostRuntime
   : undefined;
 executor?.start();
 
+/**
+ * Channels live wherever the runtime does. A refresh loop rather than a watch:
+ * deploying an agent starts its bot within a minute, which is soon enough and
+ * needs nothing to fire an event across processes.
+ */
+const channels = hostRuntime
+  ? new ChannelManager({
+      db: database.db,
+      logger,
+      secretStore: new EncryptedDbSecretStore(database.db, secretKey),
+    })
+  : undefined;
+const channelRefresh = channels
+  ? setInterval(() => void channels.refresh().catch(() => undefined), 60_000)
+  : undefined;
+await channels?.refresh().catch((err) => logger.error({ err }, "channel startup failed"));
+
 const server = serve({ fetch: app.fetch, port: env.API_PORT }, (info) => {
   logger.info(
     {
@@ -75,6 +93,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     logger.info({ signal }, "shutting down");
     server.close(async () => {
+      clearInterval(channelRefresh);
+      await channels?.stop();
       await executor?.stop();
       await database.close();
       process.exit(0);
