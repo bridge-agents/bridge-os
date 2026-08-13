@@ -60,8 +60,25 @@ export class ApiClient {
     };
   }
 
+  /**
+   * `fetch` throws a bare `TypeError: fetch failed` for a refused or
+   * unresolvable connection — every command routes through here, so this is
+   * the one place to turn that into something a user can act on instead of
+   * a stack-free stringified TypeError.
+   */
+  private async doFetch(path: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(`${this.options.apiUrl}${path}`, init);
+    } catch {
+      throw new CliError(
+        `Can't reach Bridge at ${this.options.apiUrl}. Is the API running?\n` +
+          "  Start it with `pnpm dev` from the project root, then try again.",
+      );
+    }
+  }
+
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await this.fetchImpl(`${this.options.apiUrl}${path}`, {
+    const res = await this.doFetch(path, {
       ...init,
       headers: { ...this.headers(), ...(init.headers ?? {}) },
     });
@@ -91,7 +108,7 @@ export class ApiClient {
 
   /** Yields `{event, data}` records from a run's SSE stream. */
   async *stream(path: string): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {
-    const res = await this.fetchImpl(`${this.options.apiUrl}${path}`, { headers: this.headers() });
+    const res = await this.doFetch(path, { headers: this.headers() });
     if (!res.ok || !res.body) throw new CliError(`stream failed (${res.status})`);
 
     const reader = res.body.getReader();
