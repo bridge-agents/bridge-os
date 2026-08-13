@@ -9,6 +9,7 @@ import type { CompletionResult, DeltaHandler, Provider } from "@bridge/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type CliConfig } from "./client.js";
 import {
+  chat,
   decideApproval,
   listAgents,
   listApprovals,
@@ -176,6 +177,39 @@ describe("bridge agent", () => {
 
   it("refuses an unknown agent by name", async () => {
     await expect(runAgent(ctx(), "ghost", "hi")).rejects.toThrow(/no agent named/);
+  });
+});
+
+describe("bridge chat", () => {
+  it("picks the first deployed agent when none is named", async () => {
+    const written: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+
+    // One message, then an empty line to leave the REPL.
+    const questions = ["hi there", ""];
+    const prompt = async () => questions.shift() ?? "";
+
+    try {
+      await Promise.all([
+        chat({ ...ctx(), prompt }),
+        (async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          await executor().runOnce();
+        })(),
+      ]);
+    } finally {
+      process.stdout.write = original;
+    }
+
+    expect(written.join("")).toContain("Hello from the agent.");
+  });
+
+  it("refuses without an interactive terminal", async () => {
+    await expect(chat(ctx())).rejects.toThrow(/interactive terminal/);
   });
 });
 

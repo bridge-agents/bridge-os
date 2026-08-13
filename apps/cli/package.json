@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "bridge": "./src/index.ts"
+    "bridge": "./bin/bridge.mjs"
   },
   "scripts": {
     "start": "tsx src/index.ts",
@@ -12,11 +12,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@bridge/core": "workspace:*"
+    "@bridge/core": "workspace:*",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0",
     "@bridge/api": "workspace:*",

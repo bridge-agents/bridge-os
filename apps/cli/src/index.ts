@@ -19,7 +19,8 @@ const USAGE = `bridge — command line for Bridge Agent OS
   bridge status                       API health, agents, pending approvals
   bridge agent list                   list agents
   bridge agent run <agent> <task…>    send one task and follow it live
-  bridge chat <agent>                 hold a conversation with an agent
+  bridge chat [agent]                 hold a conversation (defaults to your
+                                       first deployed agent)
   bridge runs <agent>                 recent runs
   bridge logs <runId>                 a run's trace and answer
   bridge approvals                    what is waiting on you
@@ -44,7 +45,9 @@ async function main(argv: string[]): Promise<number> {
     config,
     client,
     out: (line: string) => console.log(line),
-    prompt: (question: string) => rl.question(question),
+    // Piped or redirected stdin has no one to answer a question — fail with
+    // a clear message instead of readline throwing mid-prompt.
+    prompt: process.stdin.isTTY ? (question: string) => rl.question(question) : undefined,
   };
 
   try {
@@ -70,12 +73,9 @@ async function main(argv: string[]): Promise<number> {
         } else throw new CliError("usage: bridge agent <list|run>");
         return 0;
       }
-      case "chat": {
-        const agent = rest[0];
-        if (!agent) throw new CliError("usage: bridge chat <agent>");
-        await chat(ctx, agent);
+      case "chat":
+        await chat(ctx, rest[0]);
         return 0;
-      }
       case "runs": {
         const agent = rest[0];
         if (!agent) throw new CliError("usage: bridge runs <agent>");

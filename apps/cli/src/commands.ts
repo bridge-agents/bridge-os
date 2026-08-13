@@ -109,6 +109,18 @@ async function findAgent(ctx: CommandContext, reference: string): Promise<AgentS
   return agent;
 }
 
+/** No agent named on the command line: fall back to the first deployed one. */
+async function defaultAgent(ctx: CommandContext): Promise<AgentSummary> {
+  const workspaceId = requireWorkspace(ctx);
+  const { agents } = await ctx.client.get<{ agents: AgentSummary[] }>(
+    `/v1/workspaces/${workspaceId}/agents`,
+  );
+
+  const agent = agents.find((candidate) => candidate.status === "deployed");
+  if (!agent) throw new CliError("no deployed agents — run `bridge agent list`");
+  return agent;
+}
+
 /**
  * Send one task and follow it live. Shared by `run` and `chat` — the only
  * difference is whether the conversation carries over.
@@ -169,9 +181,9 @@ export async function runAgent(
 }
 
 /** Interactive REPL against one agent, holding a single conversation. */
-export async function chat(ctx: CommandContext, reference: string): Promise<void> {
+export async function chat(ctx: CommandContext, reference?: string): Promise<void> {
   if (!ctx.prompt) throw new CliError("chat needs an interactive terminal");
-  const agent = await findAgent(ctx, reference);
+  const agent = reference ? await findAgent(ctx, reference) : await defaultAgent(ctx);
 
   ctx.out(`${bold(agent.name)} ${dim("— empty line or Ctrl-C to leave")}`);
   let conversationId: string | undefined;
