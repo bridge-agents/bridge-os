@@ -1,0 +1,113 @@
+#!/usr/bin/env node
+import { createInterface } from "node:readline/promises";
+import { ApiClient, CliError, loadConfig } from "./client.js";
+import {
+  chat,
+  decideApproval,
+  listAgents,
+  listApprovals,
+  listRuns,
+  login,
+  logs,
+  runAgent,
+  status,
+} from "./commands.js";
+
+const USAGE = `bridge — command line for Bridge Agent OS
+
+  bridge login <email> [password]     sign in and remember the workspace
+  bridge status                       API health, agents, pending approvals
+  bridge agent list                   list agents
+  bridge agent run <agent> <task…>    send one task and follow it live
+  bridge chat <agent>                 hold a conversation with an agent
+  bridge runs <agent>                 recent runs
+  bridge logs <runId>                 a run's trace and answer
+  bridge approvals                    what is waiting on you
+  bridge approve <approvalId>         let a paused run continue
+  bridge deny <approvalId> [reason]   refuse, with a reason for the agent
+
+Environment: BRIDGE_API_URL, BRIDGE_TOKEN, BRIDGE_WORKSPACE override the
+saved config in ~/.bridge/config.json.`;
+
+async function main(argv: string[]): Promise<number> {
+  const [command, ...rest] = argv;
+  if (!command || command === "help" || command === "--help") {
+    console.log(USAGE);
+    return 0;
+  }
+
+  const config = await loadConfig();
+  const client = new ApiClient({ apiUrl: config.apiUrl, token: config.token });
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  const ctx = {
+    config,
+    client,
+    out: (line: string) => console.log(line),
+    prompt: (question: string) => rl.question(question),
+  };
+
+  try {
+    switch (command) {
+      case "login": {
+        const email = rest[0] ?? (await rl.question("email: "));
+        // Falls back to a prompt so a password never has to sit in shell history.
+        const password = rest[1] ?? (await rl.question("password: "));
+        await login(ctx, email, password);
+        return 0;
+      }
+      case "status":
+        await status(ctx);
+        return 0;
+      case "agent": {
+        const [sub, ...args] = rest;
+        if (sub === "list") await listAgents(ctx);
+        else if (sub === "run") {
+          const [agent, ...task] = args;
+          if (!agent || task.length === 0)
+            throw new CliError("usage: bridge agent run <agent> <task…>");
+          await runAgent(ctx, agent, task.join(" "));
+        } else throw new CliError("usage: bridge agent <list|run>");
+        return 0;
+      }
+      case "chat": {
+        const agent = rest[0];
+        if (!agent) throw new CliError("usage: bridge chat <agent>");
+        await chat(ctx, agent);
+        return 0;
+      }
+      case "runs": {
+        const agent = rest[0];
+        if (!agent) throw new CliError("usage: bridge runs <agent>");
+        await listRuns(ctx, agent);
+        return 0;
+      }
+      case "logs": {
+        const runId = rest[0];
+        if (!runId) throw new CliError("usage: bridge logs <runId>");
+        await logs(ctx, runId);
+        return 0;
+      }
+      case "approvals":
+        await listApprovals(ctx);
+        return 0;
+      case "approve":
+      case "deny": {
+        const [approvalId, ...reason] = rest;
+        if (!approvalId) throw new CliError(`usage: bridge ${command} <approvalId>`);
+        await decideApproval(ctx, approvalId, command === "approve", reason.join(" ") || undefined);
+        return 0;
+      }
+      default:
+        console.error(`Unknown command "${command}".\n\n${USAGE}`);
+        return 1;
+    }
+  } catch (error) {
+    console.error(error instanceof CliError ? error.message : String(error));
+    return 1;
+  } finally {
+    rl.close();
+  }
+}
+
+process.exitCode = await main(process.argv.slice(2));

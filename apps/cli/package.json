@@ -1,0 +1,27 @@
+{
+  "name": "@bridge/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bridge": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bridge/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "@bridge/api": "workspace:*",
+    "@bridge/db": "workspace:*",
+    "@bridge/runtime": "workspace:*",
+    "@bridge/sdk": "workspace:*"
+  }
+}

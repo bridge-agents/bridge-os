@@ -99,27 +99,7 @@ export class OpenAiCompatibleProvider implements Provider {
       throw new Error(`${this.id} request failed (${res.status}): ${body.error?.message ?? ""}`);
     }
 
-    const choice = body.choices?.[0];
-    const toolCalls: ToolCall[] = (choice?.message?.tool_calls ?? []).map((call, index) => ({
-      id: call.id ?? `call_${index}`,
-      name: call.function?.name ?? "",
-      // Arguments arrive as a JSON string; malformed output must not kill the run.
-      arguments: parseArguments(call.function?.arguments),
-    }));
-
-    return {
-      message: {
-        role: "assistant",
-        content: choice?.message?.content ?? "",
-        ...(toolCalls.length ? { toolCalls } : {}),
-      },
-      usage: {
-        inputTokens: body.usage?.prompt_tokens ?? 0,
-        outputTokens: body.usage?.completion_tokens ?? 0,
-      },
-      stopReason: stopReason(choice?.finish_reason),
-      model: body.model,
-    };
+    return toResult(body);
   }
 
   /**
@@ -140,6 +120,17 @@ export class OpenAiCompatibleProvider implements Provider {
     });
     if (!res.ok || !res.body) {
       throw new Error(`${this.id} stream failed (${res.status})`);
+    }
+
+    // Plenty of self-hosted servers ignore `stream: true` and answer with a
+    // normal JSON body. Parsing that as SSE would find no frames and silently
+    // return an empty answer, so detect it and read it as a plain completion —
+    // the caller just gets no deltas.
+    if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+      const body = (await res.json().catch(() => ({}))) as WireResponse;
+      const result = toResult(body);
+      if (result.message.content) onDelta(result.message.content);
+      return result;
     }
 
     let content = "";
@@ -256,6 +247,31 @@ async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<string
       if (data) yield data;
     }
   }
+}
+
+/** Maps a non-streamed chat-completions body into a Bridge result. */
+function toResult(body: WireResponse): CompletionResult {
+  const choice = body.choices?.[0];
+  const toolCalls: ToolCall[] = (choice?.message?.tool_calls ?? []).map((call, index) => ({
+    id: call.id ?? `call_${index}`,
+    name: call.function?.name ?? "",
+    // Arguments arrive as a JSON string; malformed output must not kill the run.
+    arguments: parseArguments(call.function?.arguments),
+  }));
+
+  return {
+    message: {
+      role: "assistant",
+      content: choice?.message?.content ?? "",
+      ...(toolCalls.length ? { toolCalls } : {}),
+    },
+    usage: {
+      inputTokens: body.usage?.prompt_tokens ?? 0,
+      outputTokens: body.usage?.completion_tokens ?? 0,
+    },
+    stopReason: stopReason(choice?.finish_reason),
+    model: body.model,
+  };
 }
 
 function toWireMessage(message: ChatMessage) {

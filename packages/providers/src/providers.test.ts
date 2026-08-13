@@ -319,3 +319,28 @@ describe("streamComplete", () => {
     expect(sent.body).toMatchObject({ stream: true, stream_options: { include_usage: true } });
   });
 });
+
+describe("streamComplete fallback", () => {
+  it("still returns the answer when a server ignores stream:true", async () => {
+    // Many self-hosted servers reply with a normal JSON body regardless.
+    const provider = new OpenAiCompatibleProvider({
+      id: "ollama",
+      baseUrl: "http://localhost:11434/v1",
+      fetchImpl: fakeEndpoint({
+        model: "local",
+        choices: [{ message: { content: "plain body" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 30, completion_tokens: 4 },
+      }),
+    });
+
+    const deltas: string[] = [];
+    const result = await provider.streamComplete({ model: "local", messages: [] }, (text) =>
+      deltas.push(text),
+    );
+
+    expect(result.message.content).toBe("plain body");
+    expect(result.usage).toEqual({ inputTokens: 30, outputTokens: 4 });
+    // The whole answer arrives as one delta rather than nothing at all.
+    expect(deltas).toEqual(["plain body"]);
+  });
+});

@@ -70,6 +70,37 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
 
+  apps/cli:
+    dependencies:
+      '@bridge/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      '@bridge/api':
+        specifier: workspace:*
+        version: link:../api
+      '@bridge/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@bridge/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@bridge/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
+
   apps/web:
     dependencies:
       '@bridge/ui':
