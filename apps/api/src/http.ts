@@ -10,6 +10,12 @@ export interface AppDeps {
   secretKey: Buffer;
   /** Marks session cookies Secure; disable only for local http development. */
   secureCookies?: boolean;
+  /**
+   * Local desktop mode: the owner every unauthenticated request runs as.
+   * Set only when Bridge owns the machine it runs on (see local.ts); unset
+   * for server and Cloud deployments, where auth works normally.
+   */
+  localUserId?: string;
 }
 
 export type WorkspaceRole = "owner" | "admin" | "member";

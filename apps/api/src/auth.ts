@@ -63,13 +63,26 @@ export function requireAuth(deps: AppDeps): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const header = c.req.header("authorization");
     const token = header?.startsWith("Bearer ") ? header.slice(7) : getCookie(c, SESSION_COOKIE);
-    if (!token) throw new BridgeError("unauthorized", "authentication required");
 
-    const userId = await resolveSession(deps.db, token);
-    if (!userId) throw new BridgeError("unauthorized", "session expired or invalid");
+    const userId = token ? await resolveSession(deps.db, token) : undefined;
+    if (userId) {
+      c.set("userId", userId);
+      return next();
+    }
 
-    c.set("userId", userId);
-    await next();
+    // Local desktop mode has one owner and no way to sign in as anyone else,
+    // so a missing or stale token is not an error — it is the normal case.
+    // A leftover token from a previous server login must not lock you out of
+    // your own machine (see local.ts).
+    if (deps.localUserId) {
+      c.set("userId", deps.localUserId);
+      return next();
+    }
+
+    throw new BridgeError(
+      "unauthorized",
+      token ? "session expired or invalid" : "authentication required",
+    );
   };
 }
 

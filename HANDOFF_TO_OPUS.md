@@ -8,7 +8,7 @@ Read in this order before writing code:
 1. This file
 2. `PRODUCT_SPEC.md` — what Bridge is, the three deployment modes, the MVP
 3. `ARCHITECTURE.md` — system design, boundaries, data model
-4. `docs/architecture/ADR-0001..0013` — decisions and their reasons
+4. `docs/architecture/ADR-0001..0014` — decisions and their reasons
 5. `ROADMAP.md` — Phase 6 onward with acceptance criteria
 
 ---
@@ -182,6 +182,9 @@ Discord session resume) are listed in `ROADMAP.md` Phase 5.
    returns `not_found`, never `forbidden` — don't confirm other tenants exist.
 4. **API-first.** Clients contain zero domain logic and use only `/v1`
    endpoints. Cookie and bearer auth are equivalent so the CLI is first-class.
+   Local desktop installs have no accounts at all: one auto-provisioned owner,
+   loopback-only binding, no sign-in (ADR-0014). Server and Cloud authenticate
+   normally — do not let local mode leak into them.
 5. **Adapters at the edge.** No vendor code outside adapter implementations.
 6. **Permissions before execution.** Every tool call goes through
    `evaluatePermission`; `ask` pauses the run and emits `approval.requested`.

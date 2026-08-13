@@ -5,6 +5,7 @@ import { EncryptedDbSecretStore, providerResolver, RunExecutor } from "@bridge/r
 import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { buildApp } from "./app.js";
+import { ensureLocalAccount } from "./local.js";
 
 const env = loadEnv(
   z.object({
@@ -18,6 +19,11 @@ const env = loadEnv(
     NODE_ENV: z.string().default("development"),
     /** Force the runtime in or out of this process; defaults to embedded-only. */
     BRIDGE_EMBEDDED_RUNTIME: z.enum(["1", "0"]).optional(),
+    /**
+     * Local desktop mode: no accounts, loopback only. Defaults on for an
+     * embedded database; servers and Cloud must have it off.
+     */
+    BRIDGE_LOCAL_MODE: z.enum(["1", "0"]).optional(),
   }),
 );
 
@@ -43,7 +49,22 @@ const database = await createDb(env.DATABASE_URL);
 // Embedded installs have no separate migrate step: the app owns its database.
 if (embedded) await database.migrate();
 
-const deps = { db: database.db, logger, secretKey, secureCookies: isProduction };
+/**
+ * On your own machine there is nobody to authenticate to, so Bridge
+ * provisions one owner and skips sign-in entirely. Deliberately tied to the
+ * embedded database by default: a server pointed at real Postgres never
+ * silently drops authentication.
+ */
+const localMode = env.BRIDGE_LOCAL_MODE ? env.BRIDGE_LOCAL_MODE === "1" : embedded;
+const localAccount = localMode ? await ensureLocalAccount(database.db) : undefined;
+
+const deps = {
+  db: database.db,
+  logger,
+  secretKey,
+  secureCookies: isProduction,
+  localUserId: localAccount?.userId,
+};
 const app = buildApp(deps);
 
 /**
@@ -78,16 +99,27 @@ const channelRefresh = channels
   : undefined;
 await channels?.refresh().catch((err) => logger.error({ err }, "channel startup failed"));
 
-const server = serve({ fetch: app.fetch, port: env.API_PORT }, (info) => {
-  logger.info(
-    {
-      port: info.port,
-      database: env.DATABASE_URL.split(":")[0],
-      runtime: hostRuntime ? "in-process" : "external worker",
-    },
-    "bridge api listening",
-  );
-});
+const server = serve(
+  {
+    fetch: app.fetch,
+    port: env.API_PORT,
+    // Local mode answers without authentication, so it must never be
+    // reachable from another machine. This is the boundary that makes
+    // skipping sign-in safe rather than reckless.
+    ...(localMode ? { hostname: "127.0.0.1" } : {}),
+  },
+  (info) => {
+    logger.info(
+      {
+        port: info.port,
+        database: env.DATABASE_URL.split(":")[0],
+        runtime: hostRuntime ? "in-process" : "external worker",
+        mode: localMode ? "local (no sign-in, loopback only)" : "server",
+      },
+      "bridge api listening",
+    );
+  },
+);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {

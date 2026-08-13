@@ -10,7 +10,9 @@ describe("ApiClient", () => {
     const client = new ApiClient({ apiUrl: "http://localhost:4000", fetchImpl: unreachable });
 
     await expect(client.get("/v1/auth/me")).rejects.toThrow(CliError);
-    await expect(client.get("/v1/auth/me")).rejects.toThrow(/Can't reach Bridge at http:\/\/localhost:4000/);
+    await expect(client.get("/v1/auth/me")).rejects.toThrow(
+      /Can't reach Bridge at http:\/\/localhost:4000/,
+    );
     await expect(client.get("/v1/auth/me")).rejects.toThrow(/pnpm dev/);
   });
 

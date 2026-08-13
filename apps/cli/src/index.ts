@@ -3,6 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { ApiClient, CliError, loadConfig } from "./client.js";
 import {
   chat,
+  dashboard,
   decideApproval,
   listAgents,
   listApprovals,
@@ -11,28 +12,36 @@ import {
   logs,
   runAgent,
   status,
+  tui,
 } from "./commands.js";
+import { ensureApi } from "./serve.js";
 
-const USAGE = `bridge — command line for Bridge Agent OS
+const USAGE = `bridge — Bridge Agent OS
 
-  bridge login <email> [password]     sign in and remember the workspace
-  bridge status                       API health, agents, pending approvals
+  bridge                              start Bridge and chat with your agent
+  bridge tui                          same, explicitly
+  bridge dashboard                    start Bridge and open the dashboard
+
+  bridge status                       health, agents, pending approvals
   bridge agent list                   list agents
   bridge agent run <agent> <task…>    send one task and follow it live
-  bridge chat [agent]                 hold a conversation (defaults to your
-                                       first deployed agent)
+  bridge chat [agent]                 chat with a specific agent
   bridge runs <agent>                 recent runs
   bridge logs <runId>                 a run's trace and answer
   bridge approvals                    what is waiting on you
   bridge approve <approvalId>         let a paused run continue
   bridge deny <approvalId> [reason]   refuse, with a reason for the agent
+  bridge login <email> [password]     sign in to a remote Bridge server
 
-Environment: BRIDGE_API_URL, BRIDGE_TOKEN, BRIDGE_WORKSPACE override the
-saved config in ~/.bridge/config.json.`;
+Running locally needs no account: Bridge starts on demand and remembers this
+machine. BRIDGE_API_URL points the CLI at a different Bridge.`;
+
+/** Commands that are useless without a running Bridge, so they start one. */
+const AUTOSTART = new Set(["", "tui", "dashboard"]);
 
 async function main(argv: string[]): Promise<number> {
-  const [command, ...rest] = argv;
-  if (!command || command === "help" || command === "--help") {
+  const [command = "", ...rest] = argv;
+  if (command === "help" || command === "--help" || command === "-h") {
     console.log(USAGE);
     return 0;
   }
@@ -51,7 +60,17 @@ async function main(argv: string[]): Promise<number> {
   };
 
   try {
+    if (AUTOSTART.has(command)) await ensureApi({ apiUrl: config.apiUrl, out: ctx.out });
+
     switch (command) {
+      // Bare `bridge` is the front door: start everything, then talk.
+      case "":
+      case "tui":
+        await tui(ctx, rest[0]);
+        return 0;
+      case "dashboard":
+        await dashboard(ctx);
+        return 0;
       case "login": {
         const email = rest[0] ?? (await rl.question("email: "));
         // Falls back to a prompt so a password never has to sit in shell history.

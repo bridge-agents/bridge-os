@@ -1,4 +1,6 @@
 import { ApiClient, type CliConfig, CliError, saveConfig } from "./client.js";
+import { ensureWeb, openBrowser } from "./serve.js";
+import { needsSetup, runSetup } from "./setup.js";
 
 /**
  * Command implementations, kept free of process/stdout details so they can be
@@ -15,9 +17,21 @@ export interface CommandContext {
 const bold = (text: string) => `[1m${text}[0m`;
 const dim = (text: string) => `[2m${text}[0m`;
 
-function requireWorkspace(ctx: CommandContext): string {
-  const workspaceId = ctx.config.workspaceId;
-  if (!workspaceId) throw new CliError("no workspace selected — run `bridge login` first");
+/**
+ * The workspace to act in.
+ *
+ * Locally there is exactly one and nobody signed in to pick it, so ask the
+ * API rather than making the user run `bridge login` to learn something the
+ * server already knows. Cached on the context so one command asks once.
+ */
+export async function ensureWorkspace(ctx: CommandContext): Promise<string> {
+  if (ctx.config.workspaceId) return ctx.config.workspaceId;
+
+  const { workspaces } = await ctx.client.get<{ workspaces: { id: string }[] }>("/v1/workspaces");
+  const workspaceId = workspaces[0]?.id;
+  if (!workspaceId) throw new CliError("no workspace available — run `bridge login` first");
+
+  ctx.config.workspaceId = workspaceId;
   return workspaceId;
 }
 
@@ -70,7 +84,7 @@ export async function status(ctx: CommandContext): Promise<void> {
     return;
   }
 
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const [{ agents }, { approvals }] = await Promise.all([
     ctx.client.get<{ agents: AgentSummary[] }>(`/v1/workspaces/${workspaceId}/agents`),
     ctx.client.get<{ approvals: ApprovalSummary[] }>(`/v1/workspaces/${workspaceId}/approvals`),
@@ -84,7 +98,7 @@ export async function status(ctx: CommandContext): Promise<void> {
 }
 
 export async function listAgents(ctx: CommandContext): Promise<void> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const { agents } = await ctx.client.get<{ agents: AgentSummary[] }>(
     `/v1/workspaces/${workspaceId}/agents`,
   );
@@ -97,7 +111,7 @@ export async function listAgents(ctx: CommandContext): Promise<void> {
 
 /** Resolve an agent by slug or id so commands can take either. */
 async function findAgent(ctx: CommandContext, reference: string): Promise<AgentSummary> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const { agents } = await ctx.client.get<{ agents: AgentSummary[] }>(
     `/v1/workspaces/${workspaceId}/agents`,
   );
@@ -111,7 +125,7 @@ async function findAgent(ctx: CommandContext, reference: string): Promise<AgentS
 
 /** No agent named on the command line: fall back to the first deployed one. */
 async function defaultAgent(ctx: CommandContext): Promise<AgentSummary> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const { agents } = await ctx.client.get<{ agents: AgentSummary[] }>(
     `/v1/workspaces/${workspaceId}/agents`,
   );
@@ -131,7 +145,7 @@ async function sendAndFollow(
   input: string,
   conversationId?: string,
 ): Promise<{ conversationId: string; status: string }> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const { run } = await ctx.client.post<{
     run: { id: string; conversationId: string };
   }>(`/v1/workspaces/${workspaceId}/agents/${agent.id}/runs`, {
@@ -181,9 +195,8 @@ export async function runAgent(
 }
 
 /** Interactive REPL against one agent, holding a single conversation. */
-export async function chat(ctx: CommandContext, reference?: string): Promise<void> {
+export async function conversation(ctx: CommandContext, agent: AgentSummary): Promise<void> {
   if (!ctx.prompt) throw new CliError("chat needs an interactive terminal");
-  const agent = reference ? await findAgent(ctx, reference) : await defaultAgent(ctx);
 
   ctx.out(`${bold(agent.name)} ${dim("— empty line or Ctrl-C to leave")}`);
   let conversationId: string | undefined;
@@ -197,8 +210,14 @@ export async function chat(ctx: CommandContext, reference?: string): Promise<voi
   }
 }
 
+/** Chat with a named agent, or the first deployed one. */
+export async function chat(ctx: CommandContext, reference?: string): Promise<void> {
+  if (!ctx.prompt) throw new CliError("chat needs an interactive terminal");
+  return conversation(ctx, reference ? await findAgent(ctx, reference) : await defaultAgent(ctx));
+}
+
 export async function listRuns(ctx: CommandContext, reference: string): Promise<void> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const agent = await findAgent(ctx, reference);
   const { runs } = await ctx.client.get<{ runs: RunSummary[] }>(
     `/v1/workspaces/${workspaceId}/agents/${agent.id}/runs`,
@@ -215,7 +234,7 @@ export async function listRuns(ctx: CommandContext, reference: string): Promise<
 
 /** Print a run's trace — the CLI equivalent of the web run inspector. */
 export async function logs(ctx: CommandContext, runId: string): Promise<void> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const { run, steps } = await ctx.client.get<{
     run: { status: string; error: string | null; output: { content?: string } | null };
     steps: { seq: number; type: string; agentName: string | null; data: Record<string, unknown> }[];
@@ -235,7 +254,7 @@ export async function logs(ctx: CommandContext, runId: string): Promise<void> {
 }
 
 export async function listApprovals(ctx: CommandContext): Promise<void> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const { approvals } = await ctx.client.get<{ approvals: ApprovalSummary[] }>(
     `/v1/workspaces/${workspaceId}/approvals`,
   );
@@ -254,9 +273,37 @@ export async function decideApproval(
   approved: boolean,
   reason?: string,
 ): Promise<void> {
-  const workspaceId = requireWorkspace(ctx);
+  const workspaceId = await ensureWorkspace(ctx);
   const path = `/v1/workspaces/${workspaceId}/approvals/${approvalId}/${approved ? "approve" : "deny"}`;
 
   await ctx.client.post(path, approved ? undefined : { reason });
   ctx.out(approved ? "Approved — the run resumes." : "Denied.");
+}
+
+/**
+ * `bridge tui` — the whole product in one command: start Bridge if it isn't
+ * running, walk first-run setup if this is a new install, then talk to your
+ * agent. Nothing to sign into, nothing to configure first.
+ */
+export async function tui(ctx: CommandContext, reference?: string): Promise<void> {
+  const workspaceId = await ensureWorkspace(ctx);
+
+  if (await needsSetup(ctx, workspaceId)) {
+    const agent = await runSetup(ctx, workspaceId);
+    return conversation(ctx, agent);
+  }
+  return chat(ctx, reference);
+}
+
+/** `bridge dashboard` — same setup guarantee, then open the browser. */
+export async function dashboard(ctx: CommandContext): Promise<void> {
+  const workspaceId = await ensureWorkspace(ctx);
+
+  if (ctx.prompt && (await needsSetup(ctx, workspaceId))) {
+    await runSetup(ctx, workspaceId);
+  }
+
+  const url = await ensureWeb(ctx.out);
+  ctx.out(`Bridge dashboard: ${bold(url)}`);
+  openBrowser(url);
 }

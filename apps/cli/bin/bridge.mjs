@@ -4,8 +4,8 @@
 // erasable syntax). This resolves tsx relative to itself — not the caller's
 // cwd — so `bridge` works the same run from anywhere once linked globally.
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const entry = join(here, "..", "src", "index.ts");

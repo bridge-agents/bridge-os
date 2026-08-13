@@ -14,14 +14,20 @@ Needs Node ≥ 22 and pnpm 10 (`corepack enable`). **No Docker required.**
 
 ```bash
 pnpm install
-cp .env.example .env
-pnpm dev
+cd apps/cli && pnpm link --global    # puts `bridge` on your PATH
+bridge
 ```
 
-Open http://localhost:3000, create an account, connect a model provider, and
-create an agent — from a template, from scratch, or by describing what you
-want and letting Bridge design it. Deploy it, send it a task, and watch the
-run complete with its full trace.
+That is the whole setup. `bridge` starts Bridge if it isn't running, asks two
+questions the first time (which model provider, which model), creates and
+deploys a starter agent, and drops you into a conversation with it. Prefer a
+browser? `bridge dashboard` does the same and opens the dashboard.
+
+**Running locally, there is no account.** No signup, no login, no password:
+the database is a file on your machine and the server listens on loopback
+only, so Bridge provisions a single owner for you and remembers this device.
+Accounts exist for self-hosted servers and Bridge Cloud, where more than one
+person can reach the same install.
 
 Agents can use tools (HTTP, files, shell, search, and any MCP server) inside
 an enforced sandbox. Anything destructive pauses the run and waits for you in
@@ -32,6 +38,19 @@ The database is embedded (Postgres compiled to WASM, stored in
 there is nothing to install, start, or configure. Any OpenAI-compatible
 endpoint works as a provider, including a local Ollama or LM Studio — so you
 can run Bridge end to end with no hosted API key at all.
+
+### Everyday commands
+
+| Command | What it does |
+|---|---|
+| `bridge` | Start Bridge and chat with your agent |
+| `bridge dashboard` | Start Bridge and open the web dashboard |
+| `bridge status` | Health, agents, pending approvals |
+| `bridge agent list` | Your agents |
+| `bridge approvals` | What is waiting on you |
+
+Working on the code itself? `pnpm dev` still runs the API and web app in the
+foreground with hot reload, which is what you want when editing them.
 
 ### Optional: run against Postgres + Redis
 
