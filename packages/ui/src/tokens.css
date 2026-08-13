@@ -3,8 +3,15 @@
  * User customisation (accent, background, appearance) rewrites these values;
  * components only ever reference tokens. The Bridge logo, name, and core
  * design language are not themeable.
+ *
+ * Appearance is a token swap, nothing more: `data-theme="light"` on <html>
+ * redefines the same names, so no component knows which theme is active and
+ * none of them can drift between the two.
  */
-:root {
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
   /* Surfaces (near-black, graphite) */
   --bridge-bg: #0a0a0b;
   --bridge-bg-raised: #131315;
@@ -27,7 +34,37 @@
   --bridge-success: #3ecf8e;
   --bridge-warning: #f5a623;
   --bridge-danger: #f0544c;
+}
 
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces: paper white, with raised panels reading slightly cooler */
+  --bridge-bg: #ffffff;
+  --bridge-bg-raised: #f7f7f8;
+  --bridge-bg-overlay: #ededf0;
+
+  --bridge-border: #e2e2e6;
+  --bridge-border-strong: #c9c9d0;
+
+  --bridge-text: #16161a;
+  --bridge-text-muted: #5f5f6a;
+  --bridge-text-faint: #8a8a95;
+
+  /*
+   * Silver is the brand, but silver-on-white is unreadable as a fill. Light
+   * mode keeps the metallic identity in the logo and borders and uses graphite
+   * for accent fills so button text stays legible (WCAG contrast, not taste).
+   */
+  --bridge-accent: #2b2b31;
+  --bridge-accent-contrast: #ffffff;
+
+  --bridge-success: #12885a;
+  --bridge-warning: #a86400;
+  --bridge-danger: #c8352c;
+}
+
+:root {
   /* Geometry */
   --bridge-radius-sm: 6px;
   --bridge-radius-md: 10px;
@@ -36,4 +73,8 @@
   /* Typography */
   --bridge-font-sans: "Inter", -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --bridge-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", monospace;
+
+  /* Shell */
+  --bridge-sidebar-width: 15rem;
+  --bridge-sidebar-collapsed: 3.5rem;
 }

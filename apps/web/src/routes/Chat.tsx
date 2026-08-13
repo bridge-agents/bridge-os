@@ -24,10 +24,6 @@ export function Chat() {
   const [params, setParams] = useSearchParams();
 
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
-  const [agentId, setAgentId] = useState(params.get("agent") ?? "");
-  const [conversationId, setConversationId] = useState<string | undefined>(
-    params.get("conversation") ?? undefined,
-  );
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState<Approval[]>([]);
@@ -35,13 +31,24 @@ export function Chat() {
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
+  /*
+   * The URL is the state, not a copy of it. The sidebar opens a thread by
+   * navigating, so holding these in useState would ignore every click after
+   * the first mount — "New chat" especially, which only changes the query.
+   */
+  const [fallbackAgentId, setFallbackAgentId] = useState("");
+  const agentId = params.get("agent") ?? fallbackAgentId;
+  const conversationId = params.get("conversation") ?? undefined;
+
+  const setAgentId = (id: string) => setParams({ agent: id }, { replace: true });
+
   useEffect(() => {
     void api.agents(workspaceId).then(({ agents: list }) => {
       setAgents(list);
       // Default to the first deployed agent so chat is usable immediately.
-      if (!agentId) setAgentId(list.find((agent) => agent.status === "deployed")?.id ?? "");
+      setFallbackAgentId(list.find((agent) => agent.status === "deployed")?.id ?? "");
     });
-  }, [workspaceId, agentId]);
+  }, [workspaceId]);
 
   // Replay an existing conversation when one is selected.
   useEffect(() => {
@@ -95,7 +102,6 @@ export function Chat() {
 
     try {
       const { run } = await api.startRun(workspaceId, agentId, text, conversationId);
-      setConversationId(run.conversationId);
       setParams({ agent: agentId, conversation: run.conversationId }, { replace: true });
 
       await api.streamRun(workspaceId, run.id, {
@@ -168,7 +174,6 @@ export function Chat() {
             value={agentId}
             onChange={(e) => {
               setAgentId(e.target.value);
-              setConversationId(undefined);
               setTurns([]);
             }}
             className="rounded-[var(--radius-sm)] border border-border bg-bg px-2 py-1 text-sm outline-none"
@@ -185,7 +190,6 @@ export function Chat() {
           <Button
             variant="ghost"
             onClick={() => {
-              setConversationId(undefined);
               setTurns([]);
               setParams({ agent: agentId }, { replace: true });
             }}

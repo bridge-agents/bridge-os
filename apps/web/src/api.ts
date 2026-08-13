@@ -70,6 +70,14 @@ export interface ProviderConfig {
   baseUrl: string | null;
   keyHint: string | null;
 }
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  agentId: string;
+  agentName: string;
+  externalId: string | null;
+  createdAt: string;
+}
 export interface SecretRef {
   id: string;
   name: string;
@@ -199,6 +207,8 @@ export const api = {
       { instruction },
     ),
 
+  conversations: (workspaceId: string) =>
+    get<{ conversations: ConversationSummary[] }>(`/v1/workspaces/${workspaceId}/conversations`),
   conversation: (workspaceId: string, conversationId: string) =>
     get<{
       conversation: { id: string; title: string | null };

@@ -193,6 +193,28 @@ export function runRoutes(deps: AppDeps) {
     return c.json({ conversations: rows });
   });
 
+  /**
+   * Recent conversations across every agent — what the sidebar's chat history
+   * is. Joined to agents so the list can be grouped without N+1 lookups.
+   */
+  app.get("/conversations", async (c) => {
+    const rows = await deps.db
+      .select({
+        id: conversations.id,
+        title: conversations.title,
+        agentId: conversations.agentId,
+        agentName: agents.name,
+        externalId: conversations.externalId,
+        createdAt: conversations.createdAt,
+      })
+      .from(conversations)
+      .innerJoin(agents, eq(agents.id, conversations.agentId))
+      .where(eq(conversations.workspaceId, c.get("workspaceId")))
+      .orderBy(desc(conversations.createdAt))
+      .limit(100);
+    return c.json({ conversations: rows });
+  });
+
   app.get("/conversations/:conversationId", async (c) => {
     const workspaceId = c.get("workspaceId");
     const conversationId = c.req.param("conversationId");
