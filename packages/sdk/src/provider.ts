@@ -65,10 +65,22 @@ export interface ModelInfo {
   contextWindow?: number;
 }
 
+export type DeltaHandler = (text: string) => void;
+
 export interface Provider {
   /** Registered adapter id referenced by Manifest ModelRefs, e.g. "anthropic". */
   readonly id: string;
   complete(request: CompletionRequest): Promise<CompletionResult>;
+  /**
+   * Stream text as it arrives *and* resolve to the same result `complete()`
+   * would return, tool calls included.
+   *
+   * This is what the agent loop uses when someone is watching: plain
+   * `stream()` throws away the assembled message, so it cannot drive a turn
+   * that might call a tool — and the loop never knows in advance whether a
+   * turn will.
+   */
+  streamComplete?(request: CompletionRequest, onDelta: DeltaHandler): Promise<CompletionResult>;
   stream?(request: CompletionRequest): AsyncIterable<CompletionChunk>;
   listModels?(): Promise<ModelInfo[]>;
 }

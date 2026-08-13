@@ -5,6 +5,7 @@ export type {
   CompletionChunk,
   CompletionRequest,
   CompletionResult,
+  DeltaHandler,
   MessageRole,
   ModelInfo,
   Provider,

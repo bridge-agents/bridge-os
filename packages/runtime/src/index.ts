@@ -1,3 +1,4 @@
+export { type RunEvent, runBus } from "./bus.js";
 export {
   type AgentPlan,
   compile,

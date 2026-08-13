@@ -9,9 +9,10 @@ import { authRoutes } from "./auth.js";
 import type { AppDeps, AppEnv } from "./http.js";
 import { providerRoutes } from "./providers.js";
 import { runRoutes } from "./runs.js";
+import { streamRoutes } from "./stream.js";
 import { workspaceRoutes } from "./workspaces.js";
 
-export const API_VERSION = "0.4.0";
+export const API_VERSION = "0.5.0";
 
 /**
  * Route layer only: validate, call domain modules, serialize (ADR-0005).
@@ -83,6 +84,7 @@ export function buildApp(deps: AppDeps) {
   app.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/approvals", approvalRoutes(deps));
+  app.route("/v1/workspaces/:workspaceId", streamRoutes(deps));
   // Run, conversation and lifecycle routes share one workspace-scoped mount.
   app.route("/v1/workspaces/:workspaceId", runRoutes(deps));
 

@@ -4,6 +4,7 @@ import type {
   CompletionChunk,
   CompletionRequest,
   CompletionResult,
+  DeltaHandler,
   ModelInfo,
   Provider,
   StopReason,
@@ -96,25 +97,8 @@ export class AnthropicProvider implements Provider {
     }
   }
 
-  async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const { system, messages } = this.toAnthropicMessages(request.messages);
-
-    const response = await this.client.messages.create({
-      model: request.model,
-      max_tokens: request.maxTokens ?? 16000,
-      ...(system ? { system } : {}),
-      messages,
-      ...(request.tools?.length
-        ? {
-            tools: request.tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
-            })),
-          }
-        : {}),
-    });
-
+  /** One place that turns an Anthropic message into a Bridge result. */
+  private static toResult(response: Anthropic.Message): CompletionResult {
     let text = "";
     const toolCalls: ToolCall[] = [];
     for (const block of response.content) {
@@ -141,6 +125,59 @@ export class AnthropicProvider implements Provider {
       stopReason: AnthropicProvider.stopReason(response.stop_reason),
       model: response.model,
     };
+  }
+
+  async complete(request: CompletionRequest): Promise<CompletionResult> {
+    const { system, messages } = this.toAnthropicMessages(request.messages);
+
+    const response = await this.client.messages.create({
+      model: request.model,
+      max_tokens: request.maxTokens ?? 16000,
+      ...(system ? { system } : {}),
+      messages,
+      ...(request.tools?.length
+        ? {
+            tools: request.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+            })),
+          }
+        : {}),
+    });
+
+    return AnthropicProvider.toResult(response);
+  }
+
+  /**
+   * Streams text while it is generated and still returns the complete
+   * message. The SDK assembles the final message for us, so tool calls
+   * survive streaming untouched.
+   */
+  async streamComplete(
+    request: CompletionRequest,
+    onDelta: DeltaHandler,
+  ): Promise<CompletionResult> {
+    const { system, messages } = this.toAnthropicMessages(request.messages);
+
+    const stream = this.client.messages.stream({
+      model: request.model,
+      max_tokens: request.maxTokens ?? 16000,
+      ...(system ? { system } : {}),
+      messages,
+      ...(request.tools?.length
+        ? {
+            tools: request.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+            })),
+          }
+        : {}),
+    });
+
+    stream.on("text", (delta) => onDelta(delta));
+    return AnthropicProvider.toResult(await stream.finalMessage());
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<CompletionChunk> {

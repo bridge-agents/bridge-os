@@ -70,6 +70,12 @@ export interface LoopDeps {
   /** Executable tools for one agent, already bound to its sandbox. */
   toolsFor(agentName: string): BridgeTool[] | Promise<BridgeTool[]>;
   onStep(step: RunStepRecord): Promise<void>;
+  /**
+   * Called with assistant text as it is generated. Providing it switches the
+   * loop to `streamComplete`, which streams *and* returns the full message —
+   * so a turn that ends in a tool call still works.
+   */
+  onDelta?(delta: { agentName: string; text: string }): void;
   isCancelled(): Promise<boolean>;
   context: { workspaceId: string; agentId: string; runId: string };
   log?: (message: string, data?: Record<string, unknown>) => void;
@@ -409,13 +415,22 @@ export async function runAgentLoop(options: {
       ...(await toolsFor(frame.agentName)).map(toolDefinition),
     ];
 
-    const result = await provider.complete({
+    const request = {
       model: agent.model.model,
       // A copy: the loop keeps appending to the frame, and an adapter that
       // held the live array would see turns that were not part of its request.
       messages: [...frame.messages],
       ...(definitions.length ? { tools: definitions } : {}),
-    });
+    };
+
+    // Stream when someone is watching and the adapter supports it; otherwise
+    // one request either way — streaming is a delivery detail, not a mode.
+    const result =
+      deps.onDelta && provider.streamComplete
+        ? await provider.streamComplete(request, (text) =>
+            deps.onDelta?.({ agentName: frame.agentName, text }),
+          )
+        : await provider.complete(request);
     usage = addUsage(usage, result.usage);
 
     await deps.onStep({

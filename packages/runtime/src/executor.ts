@@ -13,6 +13,7 @@ import { estimateCost } from "@bridge/providers";
 import type { ChatMessage, Provider, TokenUsage } from "@bridge/sdk";
 import { parseManifest } from "@bridge/spec";
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { runBus } from "./bus.js";
 import { compile } from "./compiler.js";
 import type { ApprovalDecision, ApprovalRequest, LoopCheckpoint, RunStepRecord } from "./loop.js";
 import { runAgentLoop } from "./loop.js";
@@ -220,6 +221,8 @@ export class RunExecutor {
             runId: run.id,
           },
           log: (message, data) => logger.debug({ runId: run.id, ...data }, message),
+          onDelta: ({ agentName, text }) =>
+            runBus.publish({ type: "delta", runId: run.id, agentName, text }),
           isCancelled: async () => {
             const [current] = await db
               .select({ cancelRequested: runs.cancelRequested })
@@ -236,16 +239,23 @@ export class RunExecutor {
                 hasPricedStep = true;
               }
             }
+            const stepSeq = seq++;
             await db.insert(runSteps).values({
               id: id("stp"),
               workspaceId: run.workspaceId,
               runId: run.id,
-              seq: seq++,
+              seq: stepSeq,
               type: step.type,
               agentName: step.agentName,
               data: step.data,
               inputTokens: step.type === "model_call" ? step.usage.inputTokens : 0,
               outputTokens: step.type === "model_call" ? step.usage.outputTokens : 0,
+            });
+            runBus.publish({
+              type: "step",
+              runId: run.id,
+              seq: stepSeq,
+              step: { type: step.type, agentName: step.agentName, data: step.data },
             });
           },
         },
@@ -257,6 +267,7 @@ export class RunExecutor {
           costUsd: hasPricedStep ? costUsd : undefined,
           usage: result.usage,
         });
+        runBus.publish({ type: "status", runId: run.id, status: "waiting_approval" });
         logger.info({ runId: run.id, tool: result.request.toolName }, "run awaiting approval");
         return;
       }
@@ -279,6 +290,7 @@ export class RunExecutor {
         })
         .where(eq(runs.id, run.id));
 
+      runBus.publish({ type: "status", runId: run.id, status });
       await appendEvent(db, status === "succeeded" ? "run.completed" : "run.failed", {
         workspaceId: run.workspaceId,
         agentId: run.agentId,

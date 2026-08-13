@@ -3,6 +3,7 @@ import type {
   CompletionChunk,
   CompletionRequest,
   CompletionResult,
+  DeltaHandler,
   ModelInfo,
   Provider,
   StopReason,
@@ -81,7 +82,8 @@ export class OpenAiCompatibleProvider implements Provider {
         : {}),
       ...(request.maxTokens ? { max_tokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-      ...(stream ? { stream: true } : {}),
+      // Servers that support it report usage on a final chunk; the rest ignore it.
+      ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     });
   }
 
@@ -120,6 +122,88 @@ export class OpenAiCompatibleProvider implements Provider {
     };
   }
 
+  /**
+   * Streams text and reassembles the full response, tool calls included.
+   *
+   * The wire format sends tool calls as fragments keyed by index, with the
+   * name in one chunk and the JSON arguments dribbled across later ones, so
+   * they have to be accumulated rather than read from any single chunk.
+   */
+  async streamComplete(
+    request: CompletionRequest,
+    onDelta: DeltaHandler,
+  ): Promise<CompletionResult> {
+    const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: this.headers(),
+      body: this.body(request, true),
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`${this.id} stream failed (${res.status})`);
+    }
+
+    let content = "";
+    let finish: string | undefined;
+    let model: string | undefined;
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    const partials = new Map<number, { id?: string; name?: string; args: string }>();
+
+    for await (const data of readSse(res.body)) {
+      const chunk = JSON.parse(data) as {
+        model?: string;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        choices?: {
+          delta?: { content?: string; tool_calls?: (WireToolCall & { index?: number })[] };
+          finish_reason?: string;
+        }[];
+      };
+      model ??= chunk.model;
+      // Usage arrives on a final chunk when the server supports it.
+      if (chunk.usage) usage = chunk.usage;
+
+      const choice = chunk.choices?.[0];
+      if (choice?.finish_reason) finish = choice.finish_reason;
+
+      const text = choice?.delta?.content;
+      if (text) {
+        content += text;
+        onDelta(text);
+      }
+
+      for (const [position, call] of (choice?.delta?.tool_calls ?? []).entries()) {
+        const index = call.index ?? position;
+        const partial = partials.get(index) ?? { args: "" };
+        if (call.id) partial.id = call.id;
+        if (call.function?.name) partial.name = call.function.name;
+        if (call.function?.arguments) partial.args += call.function.arguments;
+        partials.set(index, partial);
+      }
+    }
+
+    const toolCalls: ToolCall[] = [...partials.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([index, partial]) => ({
+        id: partial.id ?? `call_${index}`,
+        name: partial.name ?? "",
+        arguments: parseArguments(partial.args),
+      }));
+
+    return {
+      message: {
+        role: "assistant",
+        content,
+        ...(toolCalls.length ? { toolCalls } : {}),
+      },
+      usage: {
+        inputTokens: usage?.prompt_tokens ?? 0,
+        outputTokens: usage?.completion_tokens ?? 0,
+      },
+      // Some servers omit finish_reason when tool calls stream; infer it.
+      stopReason: stopReason(finish ?? (toolCalls.length ? "tool_calls" : undefined)),
+      model,
+    };
+  }
+
   async *stream(request: CompletionRequest): AsyncIterable<CompletionChunk> {
     const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
       method: "POST",
@@ -128,32 +212,13 @@ export class OpenAiCompatibleProvider implements Provider {
     });
     if (!res.ok || !res.body) throw new Error(`${this.id} stream failed (${res.status})`);
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE frames are newline-delimited; keep the trailing partial line.
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") return;
-        try {
-          const parsed = JSON.parse(data) as {
-            choices?: { delta?: { content?: string } }[];
-          };
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) yield { delta };
-        } catch {
-          // Ignore keep-alives and any frame that isn't a JSON payload.
-        }
+    for await (const data of readSse(res.body)) {
+      try {
+        const parsed = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta) yield { delta };
+      } catch {
+        // Ignore keep-alives and any frame that isn't a JSON payload.
       }
     }
   }
@@ -163,6 +228,33 @@ export class OpenAiCompatibleProvider implements Provider {
     if (!res.ok) return [];
     const body = (await res.json().catch(() => ({}))) as { data?: { id?: string }[] };
     return (body.data ?? []).flatMap((model) => (model.id ? [{ id: model.id }] : []));
+  }
+}
+
+/**
+ * Yields the payload of each `data:` frame in an SSE body, stopping at
+ * `[DONE]`. Frames can split across chunks, so the trailing partial line is
+ * carried over rather than parsed.
+ */
+async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === "[DONE]") return;
+      if (data) yield data;
+    }
   }
 }
 
