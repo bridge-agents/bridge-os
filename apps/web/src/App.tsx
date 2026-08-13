@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "./api.js";
 import { AgentDetail } from "./routes/AgentDetail.jsx";
 import { Agents } from "./routes/Agents.jsx";
@@ -35,10 +35,29 @@ function RuntimeStatus() {
   return (
     <div className="flex items-center gap-2 font-mono text-[11px] text-text-faint">
       <span
-        className={`h-1.5 w-1.5 rounded-full ${online ? "bg-success" : health === null ? "bg-warning" : "bg-danger"}`}
+        className={`h-1.5 w-1.5 ${online ? "bg-success" : health === null ? "bg-warning" : "bg-danger"}`}
       />
       {online ? "runtime ready" : health === null ? "connecting" : "runtime offline"}
     </div>
+  );
+}
+
+/** Page names live in the header so the shell always says where you are. */
+const PAGE_TITLES: Record<string, string> = {
+  "/chat": "Chat",
+  "/agents": "Agents",
+  "/approvals": "Approvals",
+  "/providers": "Providers",
+  "/settings": "Settings",
+};
+
+function TitleBlock() {
+  const { pathname } = useLocation();
+  const title = PAGE_TITLES[pathname] ?? (pathname.startsWith("/agents/") ? "Agent" : "Bridge");
+  return (
+    <span className="font-condensed text-[13px] font-semibold uppercase tracking-[0.12em] text-text">
+      {title}
+    </span>
   );
 }
 
@@ -48,12 +67,14 @@ function Shell() {
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center justify-end border-b border-border px-6 py-2">
+        <header className="flex shrink-0 items-center gap-4 border-b border-border px-6 py-2.5">
+          <TitleBlock />
+          <span className="dimension" aria-hidden="true" />
           <RuntimeStatus />
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-          <div className="mx-auto max-w-4xl">
+          <div className="rise mx-auto flex min-h-full max-w-4xl flex-col">
             <Routes>
               <Route path="/chat" element={<Chat />} />
               <Route path="/agents" element={<Agents />} />

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useSession } from "../session.jsx";
 import { type ThemePreference, useTheme } from "../theme.jsx";
-import { Button, Card } from "../ui.jsx";
+import { Badge, Button, Card, SectionHeader } from "../ui.jsx";
 
 /**
  * Settings that belong to this install rather than to an agent. Appearance
@@ -23,12 +23,10 @@ export function Settings() {
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">Appearance</h2>
-          <p className="text-sm text-text-muted">
-            Applies everywhere in Bridge and is remembered on this device.
-          </p>
-        </div>
+        <SectionHeader
+          title="Appearance"
+          description="Applies everywhere in Bridge and is remembered on this device."
+        />
 
         <Card className="flex flex-wrap gap-2">
           {APPEARANCES.map((option) => (
@@ -43,7 +41,9 @@ export function Settings() {
                   : "border-border text-text-muted hover:border-border-strong hover:text-text"
               }`}
             >
-              <span className="text-sm font-medium">{option.label}</span>
+              <span className="font-condensed text-sm font-semibold uppercase tracking-[0.06em]">
+                {option.label}
+              </span>
               <span className="text-xs text-text-faint">{option.hint}</span>
             </button>
           ))}
@@ -51,7 +51,7 @@ export function Settings() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">Workspace</h2>
+        <SectionHeader title="Workspace" />
         <Card className="flex flex-col gap-2 text-sm">
           <div className="flex justify-between gap-4">
             <span className="text-text-muted">Name</span>
@@ -63,13 +63,15 @@ export function Settings() {
           </div>
           <div className="flex justify-between gap-4">
             <span className="text-text-muted">Mode</span>
-            <span>{isLocal ? "Local — this device, no account" : "Server account"}</span>
+            <Badge tone={isLocal ? "success" : "neutral"}>
+              {isLocal ? "local · this device" : "server account"}
+            </Badge>
           </div>
         </Card>
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">Model providers</h2>
+        <SectionHeader title="Model providers" />
         <Card className="flex items-center justify-between gap-4">
           <p className="text-sm text-text-muted">
             API keys, local endpoints and workspace secrets are managed on the Providers page.
@@ -85,7 +87,7 @@ export function Settings() {
 
       {!isLocal && (
         <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold">Session</h2>
+          <SectionHeader title="Session" />
           <div>
             <Button variant="ghost" onClick={() => void signOut()}>
               Sign out

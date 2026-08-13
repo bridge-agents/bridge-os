@@ -1,80 +1,98 @@
 /*
  * Bridge design tokens — the single theming surface (ADR-0006).
- * User customisation (accent, background, appearance) rewrites these values;
- * components only ever reference tokens. The Bridge logo, name, and core
- * design language are not themeable.
+ * Components reference tokens only; the logo, name and design language are
+ * not themeable. Appearance is a token swap: `data-theme` on <html>
+ * redefines these names, so nothing else in the app is theme-aware.
  *
- * Appearance is a token swap, nothing more: `data-theme="light"` on <html>
- * redefines the same names, so no component knows which theme is active and
- * none of them can drift between the two.
+ * The language is an engineering drawing. Bridges are the most documented
+ * objects in engineering — survey drawings, load diagrams, span schedules —
+ * and that is also what this product does: you inspect what an autonomous
+ * agent did and sign off before it does something irreversible.
+ *
+ * Colour is drawn from the structures themselves, not from a UI palette:
+ * steel silver, red-lead oxide primer, signal amber, bronze verdigris.
  */
+
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
 
-  /* Surfaces (near-black, graphite) */
-  --bridge-bg: #0a0a0b;
-  --bridge-bg-raised: #131315;
-  --bridge-bg-overlay: #1b1b1e;
+  /* Night survey: steel reads blue in shadow, never neutral black. */
+  --bridge-bg: #0e1116;
+  --bridge-bg-raised: #141920;
+  --bridge-bg-overlay: #1c232c;
 
-  /* Borders */
-  --bridge-border: #26262a;
-  --bridge-border-strong: #35353b;
+  --bridge-border: #262f3a;
+  --bridge-border-strong: #37424f;
 
-  /* Text */
-  --bridge-text: #ededef;
-  --bridge-text-muted: #8f8f98;
-  --bridge-text-faint: #5c5c64;
+  --bridge-text: #e8ecf1;
+  --bridge-text-muted: #96a1ae;
+  --bridge-text-faint: #7b8794;
 
-  /* Brand accent: metallic silver */
-  --bridge-accent: #c6c6ce;
-  --bridge-accent-contrast: #0a0a0b;
+  /* Brand: polished structural steel. */
+  --bridge-accent: #ccd5df;
+  --bridge-accent-contrast: #0e1116;
 
-  /* Status */
-  --bridge-success: #3ecf8e;
-  --bridge-warning: #f5a623;
-  --bridge-danger: #f0544c;
+  /* Bridge materials, not a stoplight: verdigris, signal lamp, red lead. */
+  --bridge-success: #6d9e87;
+  --bridge-warning: #c8891f;
+  /* Red lead lightened until error text clears AA on both dark surfaces —
+     4.5:1 is the floor, and error text is exactly what must be readable. */
+  --bridge-danger: #d9635a;
+
+  /* Focus is the one place another hue is allowed: drawing-ink blue. */
+  --bridge-focus: #6aa6de;
+
+  --bridge-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
 }
 
 [data-theme="light"] {
   color-scheme: light;
 
-  /* Surfaces: paper white, with raised panels reading slightly cooler */
-  --bridge-bg: #ffffff;
-  --bridge-bg-raised: #f7f7f8;
-  --bridge-bg-overlay: #ededf0;
+  /* Drafting vellum: cool and blue-cast, never warm cream. */
+  --bridge-bg: #f6f8fa;
+  --bridge-bg-raised: #ffffff;
+  --bridge-bg-overlay: #eaeef3;
 
-  --bridge-border: #e2e2e6;
-  --bridge-border-strong: #c9c9d0;
+  --bridge-border: #dde3ea;
+  --bridge-border-strong: #bcc6d2;
 
-  --bridge-text: #16161a;
-  --bridge-text-muted: #5f5f6a;
-  --bridge-text-faint: #8a8a95;
+  --bridge-text: #111820;
+  --bridge-text-muted: #56626f;
+  --bridge-text-faint: #66707c;
 
   /*
-   * Silver is the brand, but silver-on-white is unreadable as a fill. Light
-   * mode keeps the metallic identity in the logo and borders and uses graphite
-   * for accent fills so button text stays legible (WCAG contrast, not taste).
+   * Silver is the identity, but silver-on-white is not a legible fill, so
+   * light mode spends the accent as graphite and keeps the metal in the
+   * mark and the rules. Contrast is not a stylistic choice.
    */
-  --bridge-accent: #2b2b31;
+  --bridge-accent: #1d252e;
   --bridge-accent-contrast: #ffffff;
 
-  --bridge-success: #12885a;
-  --bridge-warning: #a86400;
-  --bridge-danger: #c8352c;
+  --bridge-success: #3f7c62;
+  --bridge-warning: #8a5c0c;
+  --bridge-danger: #a5322a;
+
+  --bridge-focus: #2f6ea8;
+
+  --bridge-shadow: 0 1px 2px rgb(16 24 32 / 0.06), 0 8px 24px -14px rgb(16 24 32 / 0.24);
 }
 
 :root {
-  /* Geometry */
-  --bridge-radius-sm: 6px;
-  --bridge-radius-md: 10px;
-  --bridge-radius-lg: 16px;
+  /*
+   * Geometry: drawn, not rounded off. Bridges are made of plate and rivet,
+   * so radii stay tight — enough to feel machined, never pill-shaped.
+   */
+  --bridge-radius-sm: 4px;
+  --bridge-radius-md: 6px;
+  --bridge-radius-lg: 10px;
 
-  /* Typography */
-  --bridge-font-sans: "Inter", -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  --bridge-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", monospace;
+  /* Three type roles: annotation, interface, readout. */
+  --bridge-font-sans: "IBM Plex Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --bridge-font-condensed: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --bridge-font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 
   /* Shell */
-  --bridge-sidebar-width: 15rem;
+  --bridge-sidebar-width: 15.5rem;
   --bridge-sidebar-collapsed: 3.5rem;
 }

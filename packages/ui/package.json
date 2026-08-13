@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./tokens.css": "./src/tokens.css",
-    "./assets/*": "./assets/*"
+    "./assets/*": "./assets/*",
+    "./fonts.css": "./src/fonts.css"
   }
 }

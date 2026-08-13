@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@bridge/ui/fonts.css";
 @import "@bridge/ui/tokens.css";
 
 @theme {
@@ -14,7 +15,9 @@
   --color-success: var(--bridge-success);
   --color-warning: var(--bridge-warning);
   --color-danger: var(--bridge-danger);
+  --color-focus: var(--bridge-focus);
   --font-sans: var(--bridge-font-sans);
+  --font-condensed: var(--bridge-font-condensed);
   --font-mono: var(--bridge-font-mono);
   --radius-sm: var(--bridge-radius-sm);
   --radius-md: var(--bridge-radius-md);
@@ -25,4 +28,79 @@ body {
   background: var(--bridge-bg);
   color: var(--bridge-text);
   font-family: var(--bridge-font-sans);
+  /* Plex's default figures are proportional; tabular keeps columns of costs
+     and token counts from shifting as they update. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * One visible focus treatment for the whole app. Keyboard users get a ring
+ * everywhere; pointer users never see it. Not optional, not per-component.
+ */
+:focus-visible {
+  outline: 2px solid var(--bridge-focus);
+  outline-offset: 2px;
+  border-radius: var(--bridge-radius-sm);
+}
+
+/*
+ * Signature: the dimension line.
+ *
+ * A rule with a tick at each end is how a drawing states a measured span —
+ * the notation the product is named after. It marks section headings, so
+ * structure is annotated rather than decorated.
+ */
+.dimension {
+  position: relative;
+  flex: 1;
+  height: 1px;
+  background: var(--bridge-border);
+}
+.dimension::before,
+.dimension::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  width: 1px;
+  height: 7px;
+  background: var(--bridge-border-strong);
+}
+.dimension::before {
+  left: 0;
+}
+.dimension::after {
+  right: 0;
+}
+
+/* Route transitions: one orchestrated moment, not scattered effects. */
+@keyframes bridge-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: bridge-rise 160ms ease-out both;
+}
+
+/*
+ * Honouring the OS setting has to beat every other animation declaration on
+ * every element, which is exactly what !important exists for.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: must override all animation */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must override all animation */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must override all transitions */
+    transition-duration: 0.01ms !important;
+  }
 }

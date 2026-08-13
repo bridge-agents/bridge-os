@@ -2,7 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { type Approval, api, BridgeApiError } from "../api.js";
 import { useWorkspaceId } from "../session.jsx";
-import { Button, Card, EmptyState, ErrorText, Input, Spinner } from "../ui.jsx";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorText,
+  Input,
+  SectionHeader,
+  Spinner,
+} from "../ui.jsx";
 
 /**
  * The queue of things agents are waiting on a human for. Each entry shows
@@ -46,12 +55,11 @@ export function Approvals() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="text-sm font-semibold">Waiting for you</h2>
-        <p className="text-sm text-text-muted">
-          These agents have paused mid-run. Nothing happens until you decide.
-        </p>
-      </div>
+      <SectionHeader
+        title="Waiting for you"
+        description="These agents have paused mid-run. Nothing happens until you decide."
+        action={pending.length > 0 ? <Badge tone="warning">{pending.length} paused</Badge> : null}
+      />
 
       <ErrorText>{error}</ErrorText>
 
@@ -63,13 +71,15 @@ export function Approvals() {
         <ul className="flex flex-col gap-3">
           {pending.map((approval) => (
             <li key={approval.id}>
-              <Card className="flex flex-col gap-3">
+              <Card className="flex flex-col gap-3 border-l-2 border-l-warning">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">
-                      {approval.agentTitle ?? "Agent"} wants to run{" "}
-                      <span className="font-mono">{approval.toolName}</span>
-                      <span className="text-text-muted"> ({approval.action})</span>
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm">
+                      <span className="font-medium">{approval.agentTitle ?? "Agent"}</span>
+                      <span className="text-text-muted"> wants to </span>
+                      <span className="font-mono text-text">{approval.action}</span>
+                      <span className="text-text-muted"> with </span>
+                      <span className="font-mono text-text">{approval.toolName}</span>
                     </p>
                     <p className="font-mono text-xs text-text-faint">
                       {approval.agentName ? `${approval.agentName} · ` : ""}

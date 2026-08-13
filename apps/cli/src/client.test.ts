@@ -19,7 +19,6 @@ describe("ApiClient", () => {
   it("does the same for a streamed request", async () => {
     const client = new ApiClient({ apiUrl: "http://localhost:4000", fetchImpl: unreachable });
     const drain = async () => {
-      // biome-ignore lint/correctness/noUnusedVariables: draining is the point
       for await (const _event of client.stream("/v1/workspaces/w/runs/r/stream")) {
         // never reached
       }

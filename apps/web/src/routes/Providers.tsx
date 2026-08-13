@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, BridgeApiError, type ProviderConfig, type SecretRef } from "../api.js";
 import { useWorkspaceId } from "../session.jsx";
-import { Button, Card, EmptyState, ErrorText, Field, Input, Spinner } from "../ui.jsx";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorText,
+  Field,
+  Input,
+  SectionHeader,
+  Spinner,
+} from "../ui.jsx";
 
 /** Providers that authenticate with a URL rather than an API key. */
 const LOCAL_PROVIDERS = new Set(["ollama", "openai-compatible"]);
@@ -79,13 +88,10 @@ export function Providers() {
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">Connect a provider</h2>
-          <p className="text-sm text-text-muted">
-            Keys are encrypted before they are stored and are never sent back to this app. Running
-            Bridge locally does not mean the model has to be local.
-          </p>
-        </div>
+        <SectionHeader
+          title="Connect a provider"
+          description="Keys are encrypted before they are stored and never sent back to this app. Running Bridge locally does not mean the model has to be local."
+        />
 
         <Card className="flex flex-col gap-4">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -142,7 +148,7 @@ export function Providers() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">Connected</h2>
+        <SectionHeader title="Connected" />
         {connected.length === 0 ? (
           <EmptyState title="No providers connected">
             Connect at least one so your agents have a model to use.
@@ -154,7 +160,7 @@ export function Providers() {
                 key={entry.id}
                 className="flex items-center justify-between rounded-[var(--radius-md)] border border-border bg-bg-raised px-4 py-3"
               >
-                <span className="flex flex-col">
+                <span className="flex flex-col gap-0.5">
                   <span className="text-sm font-medium">{entry.provider}</span>
                   <span className="font-mono text-xs text-text-faint">
                     {entry.keyHint ?? entry.baseUrl}
@@ -170,14 +176,10 @@ export function Providers() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">Secrets</h2>
-          <p className="text-sm text-text-muted">
-            Values a manifest refers to by name — a Telegram or Discord bot token, for example.
-            Encrypted at rest and never returned, so an exported agent carries the name, not the
-            secret.
-          </p>
-        </div>
+        <SectionHeader
+          title="Secrets"
+          description="Values a manifest refers to by name — a Telegram or Discord bot token, for example. Encrypted at rest and never returned, so an exported agent carries the name, not the secret."
+        />
 
         <Card className="flex flex-col gap-4">
           <div className="grid gap-3 sm:grid-cols-2">

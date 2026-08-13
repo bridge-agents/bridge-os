@@ -141,7 +141,9 @@ export function AgentDetail() {
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Card>
-          <p className="text-xs text-text-muted">Runs on</p>
+          <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
+            Runs on
+          </p>
           <p className="text-sm font-medium">
             {manifest.deployment.target === "local"
               ? "This device"
@@ -151,11 +153,15 @@ export function AgentDetail() {
           </p>
         </Card>
         <Card>
-          <p className="text-xs text-text-muted">Agents</p>
+          <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
+            Agents
+          </p>
           <p className="text-sm font-medium">{manifest.agents.length}</p>
         </Card>
         <Card>
-          <p className="text-xs text-text-muted">Background</p>
+          <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
+            Background
+          </p>
           <p className="text-sm font-medium">
             {manifest.deployment.background ? "Keeps running" : "Only while Bridge is open"}
           </p>
@@ -163,7 +169,9 @@ export function AgentDetail() {
       </div>
 
       <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold">Give it a task</h3>
+        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
+          Give it a task
+        </h3>
         <form onSubmit={startRun} className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="flex-1">
             <Field label="Task">
@@ -187,7 +195,9 @@ export function AgentDetail() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold">Runs</h3>
+        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
+          Runs
+        </h3>
         {runsList.length === 0 ? (
           <EmptyState title="No runs yet">Send the agent a task above.</EmptyState>
         ) : (
@@ -256,7 +266,9 @@ export function AgentDetail() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold">Change it in plain language</h3>
+        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
+          Change it in plain language
+        </h3>
         <Card className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex-1">
@@ -294,7 +306,9 @@ export function AgentDetail() {
 
           {proposal && (
             <div className="flex flex-col gap-2">
-              <p className="text-xs text-text-muted">Proposed manifest</p>
+              <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
+                Proposed manifest
+              </p>
               <pre className="max-h-72 overflow-auto rounded-[var(--radius-sm)] border border-border bg-bg p-3 font-mono text-[11px]">
                 {JSON.stringify(proposal, null, 2)}
               </pre>
@@ -310,7 +324,9 @@ export function AgentDetail() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-semibold">Manifest</h3>
+        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
+          Manifest
+        </h3>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

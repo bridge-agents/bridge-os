@@ -2,7 +2,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom";
 import { type AgentSummary, type Approval, api, BridgeApiError } from "../api.js";
 import { useWorkspaceId } from "../session.jsx";
-import { Button, Card, EmptyState, ErrorText, Input, Spinner } from "../ui.jsx";
+import { Badge, Button, Card, EmptyState, ErrorText, Input, Select, Spinner } from "../ui.jsx";
 
 /**
  * Bridge Chat: a conversation with one agent, streamed.
@@ -163,32 +163,35 @@ export function Chat() {
   const deployed = agents.filter((agent) => agent.status === "deployed");
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <label htmlFor="chat-agent" className="text-xs text-text-muted">
-            Agent
-          </label>
-          <select
-            id="chat-agent"
-            value={agentId}
-            onChange={(e) => {
-              setAgentId(e.target.value);
-              setTurns([]);
-            }}
-            className="rounded-[var(--radius-sm)] border border-border bg-bg px-2 py-1 text-sm outline-none"
-          >
-            {deployed.length === 0 && <option value="">No deployed agents</option>}
-            {deployed.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div className="flex flex-1 flex-col gap-5">
+      {/* Agent selector reads as a drawing's title block: which structure,
+          and the control to start a fresh span. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label
+          htmlFor="chat-agent"
+          className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-muted"
+        >
+          Agent
+        </label>
+        <Select
+          id="chat-agent"
+          value={agentId}
+          onChange={(e) => {
+            setAgentId(e.target.value);
+            setTurns([]);
+          }}
+        >
+          {deployed.length === 0 && <option value="">No deployed agents</option>}
+          {deployed.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
+            </option>
+          ))}
+        </Select>
+        <div className="flex-1" />
         {conversationId && (
           <Button
-            variant="ghost"
+            variant="quiet"
             onClick={() => {
               setTurns([]);
               setParams({ agent: agentId }, { replace: true });
@@ -200,52 +203,71 @@ export function Chat() {
       </div>
 
       {deployed.length === 0 ? (
-        <EmptyState title="No deployed agents">
-          Deploy an agent from the Agents page to start chatting.
+        <EmptyState title="Nothing deployed yet">
+          Deploy an agent from the Agents page and it will appear here, ready to talk to.
         </EmptyState>
       ) : (
         <>
-          <div className="flex min-h-[24rem] flex-col gap-3">
+          <div className="flex min-h-[22rem] flex-1 flex-col gap-4">
             {turns.length === 0 && (
-              <p className="text-sm text-text-muted">Say something to get started.</p>
+              <p className="py-8 text-center text-sm text-text-faint">
+                Ask for something. You will see every tool it reaches for.
+              </p>
             )}
             {turns.map((turn, index) => (
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: turns are append-only
                 key={index}
-                className={`max-w-[85%] rounded-[var(--radius-md)] border px-4 py-3 ${
+                className={
                   turn.role === "user"
-                    ? "self-end border-border-strong bg-bg-overlay"
-                    : "self-start border-border bg-bg-raised"
-                }`}
+                    ? "max-w-[80%] self-end rounded-[var(--radius-md)] border border-border-strong bg-bg-overlay px-3.5 py-2.5"
+                    : "flex max-w-[88%] flex-col gap-2 self-start border-l border-border pl-3.5"
+                }
               >
+                {/*
+                  Tool activity is annotation on the answer, not a message of
+                  its own: it says how the answer was reached.
+                */}
                 {turn.activity && turn.activity.length > 0 && (
-                  <ul className="mb-2 flex flex-col gap-0.5">
+                  <ul className="flex flex-col gap-1">
                     {turn.activity.map((entry) => (
                       <li key={entry} className="font-mono text-[11px] text-text-faint">
-                        ⚙ {entry}
+                        {entry}
                       </li>
                     ))}
                   </ul>
                 )}
-                <p className="whitespace-pre-wrap text-sm">
+                <p
+                  className={`whitespace-pre-wrap text-sm leading-relaxed ${
+                    turn.role === "user" ? "" : "text-text"
+                  }`}
+                >
                   {turn.content}
-                  {turn.streaming && <span className="animate-pulse text-text-faint">▋</span>}
+                  {turn.streaming && (
+                    <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
+                  )}
                 </p>
               </div>
             ))}
             <div ref={bottom} />
           </div>
 
+          {/* The stop-the-machine moment: given the most weight on the page. */}
           {pending.length > 0 && (
-            <Card className="flex flex-col gap-3 border-warning/40">
-              <p className="text-sm font-medium">Waiting on you</p>
+            <Card className="flex flex-col gap-3 border-warning/50 bg-warning/[0.06]">
+              <div className="flex items-center gap-2">
+                <Badge tone="warning">paused</Badge>
+                <span className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em]">
+                  Waiting on you
+                </span>
+              </div>
               {pending.map((approval) => (
                 <div key={approval.id} className="flex flex-col gap-2">
-                  <p className="text-sm">
-                    Run <span className="font-mono">{approval.toolName}</span> ({approval.action})?
+                  <p className="text-sm text-text-muted">
+                    <span className="font-mono text-text">{approval.toolName}</span> wants to{" "}
+                    {approval.action}.
                   </p>
-                  <pre className="max-h-32 overflow-auto rounded-[var(--radius-sm)] border border-border bg-bg p-2 font-mono text-[11px]">
+                  <pre className="max-h-32 overflow-auto rounded-[var(--radius-sm)] border border-border bg-bg p-2.5 font-mono text-[11px] text-text-muted">
                     {JSON.stringify(approval.input, null, 2)}
                   </pre>
                   <div className="flex gap-2">
@@ -261,7 +283,7 @@ export function Chat() {
 
           <ErrorText>{error}</ErrorText>
 
-          <form onSubmit={send} className="flex items-end gap-2">
+          <form onSubmit={send} className="flex items-end gap-2 pb-1">
             <Input
               aria-label="Message"
               value={input}
@@ -270,7 +292,7 @@ export function Chat() {
               disabled={busy}
             />
             <Button type="submit" disabled={busy || !input.trim()}>
-              {busy ? "…" : "Send"}
+              {busy ? "Sending…" : "Send"}
             </Button>
           </form>
         </>

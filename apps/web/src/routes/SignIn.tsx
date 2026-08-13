@@ -1,4 +1,4 @@
-import bridgeIcon from "@bridge/ui/assets/bridge-icon.png";
+import bridgeMark from "@bridge/ui/assets/bridge-icon-transparent.png";
 import { type FormEvent, useState } from "react";
 import { api, BridgeApiError } from "../api.js";
 import { useSession } from "../session.jsx";
@@ -35,10 +35,14 @@ export function SignIn() {
     <main className="flex min-h-screen items-center justify-center p-6">
       <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-6">
         <div className="flex flex-col items-center gap-3">
-          <img src={bridgeIcon} alt="" className="h-16 w-16 rounded-2xl" />
-          <div className="text-center">
-            <h1 className="text-xl font-semibold tracking-tight">Bridge</h1>
-            <p className="text-sm text-text-muted">
+          {/* Square, not cropped: a round mask cuts the deck off at both ends. */}
+          <img src={bridgeMark} alt="" className="h-16 w-16 object-contain" />
+          <div className="flex flex-col items-center gap-1 text-center">
+            <h1 className="font-condensed text-2xl font-semibold uppercase tracking-[0.16em]">
+              Bridge
+            </h1>
+            <span className="dimension w-24" aria-hidden="true" />
+            <p className="mt-1 text-sm text-text-muted">
               {mode === "signup" ? "Create your workspace" : "Welcome back"}
             </p>
           </div>

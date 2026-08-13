@@ -98,7 +98,7 @@ function ItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
         {!collapsed && (
           <>
             <span className="truncate">{item.label}</span>
-            <span className="ml-auto rounded-full border border-border px-1.5 text-[10px] leading-4 text-text-faint">
+            <span className="ml-auto rounded-[var(--radius-sm)] border border-border px-1.5 font-mono text-[10px] leading-4 text-text-faint">
               soon
             </span>
           </>
@@ -112,11 +112,11 @@ function ItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
       to={item.to}
       title={collapsed ? item.label : undefined}
       className={({ isActive }) =>
-        `flex items-center gap-2.5 rounded-[var(--radius-sm)] py-1.5 text-sm transition ${
+        `relative flex items-center gap-2.5 rounded-[var(--radius-sm)] py-1.5 text-sm transition ${
           collapsed ? "justify-center px-0" : "px-2.5"
         } ${
           isActive
-            ? "bg-bg-overlay text-text"
+            ? "bg-bg-overlay text-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-accent"
             : "text-text-muted hover:bg-bg-overlay/60 hover:text-text"
         }`
       }
@@ -126,7 +126,7 @@ function ItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
         <>
           <span className="truncate">{item.label}</span>
           {item.badge ? (
-            <span className="ml-auto rounded-full bg-warning/20 px-1.5 font-mono text-[10px] leading-4 text-warning">
+            <span className="ml-auto rounded-[var(--radius-sm)] border border-warning/40 px-1.5 font-mono text-[10px] leading-4 text-warning">
               {item.badge}
             </span>
           ) : null}
@@ -159,10 +159,11 @@ function Section({
           onClick={onToggle}
           aria-expanded={open}
           aria-controls={`${id}-items`}
-          className="flex flex-1 items-center gap-1 rounded-[var(--radius-sm)] px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-text-faint transition hover:text-text-muted"
+          className="flex flex-1 items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1 font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint transition hover:text-text-muted"
         >
           <ChevronIcon className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} />
           {title}
+          <span className="dimension ml-1" aria-hidden="true" />
         </button>
         {action}
       </div>
@@ -260,7 +261,11 @@ export function Sidebar() {
         {/* Square, not a circle: the mark is a bridge silhouette, and cropping
             it to a round avatar cuts the deck off at both ends. */}
         <img src={bridgeMark} alt="Bridge" className="h-9 w-9 shrink-0 object-contain" />
-        {!collapsed && <span className="text-sm font-semibold tracking-tight">Bridge</span>}
+        {!collapsed && (
+          <span className="font-condensed text-base font-semibold uppercase tracking-[0.14em]">
+            Bridge
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
@@ -321,9 +326,9 @@ export function Sidebar() {
                   <NavLink
                     key={agent.id}
                     to={`/chat?agent=${agent.id}`}
-                    className={`flex items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm transition ${
+                    className={`relative flex items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm transition ${
                       openAgent === agent.id && !openConversation
-                        ? "bg-bg-overlay text-text"
+                        ? "bg-bg-overlay text-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-accent"
                         : "text-text-muted hover:bg-bg-overlay/60 hover:text-text"
                     }`}
                   >
@@ -347,9 +352,9 @@ export function Sidebar() {
                   <NavLink
                     key={thread.id}
                     to={`/chat?agent=${thread.agentId}&conversation=${thread.id}`}
-                    className={`truncate rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm transition ${
+                    className={`relative truncate rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm transition ${
                       openConversation === thread.id
-                        ? "bg-bg-overlay text-text"
+                        ? "bg-bg-overlay text-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-accent"
                         : "text-text-muted hover:bg-bg-overlay/60 hover:text-text"
                     }`}
                     title={thread.title ?? thread.agentName}
@@ -388,7 +393,11 @@ export function Sidebar() {
         >
           {appearance === "dark" ? <SunIcon /> : <MoonIcon />}
         </button>
-        {!collapsed && <span className="truncate text-xs text-text-faint">{workspace?.name}</span>}
+        {!collapsed && (
+          <span className="truncate font-condensed text-[11px] uppercase tracking-[0.1em] text-text-faint">
+            {workspace?.name}
+          </span>
+        )}
       </div>
     </aside>
   );

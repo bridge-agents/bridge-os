@@ -1,0 +1,66 @@
+/*
+ * IBM Plex, bundled rather than fetched.
+ *
+ * Plex was drawn for an engineering company and its skeleton is engineered
+ * rather than humanist — the right voice for a product named after a
+ * structure. Three roles, one superfamily, so they cohere:
+ *   Condensed  — drafting annotation: eyebrows, labels, title blocks
+ *   Sans       — body and interface
+ *   Mono       — machine identifiers, costs, traces
+ *
+ * Local files, not a CDN: a desktop install has to render correctly with no
+ * network at all (ADR-0008), and a webfont request is a network dependency.
+ * `swap` so text is readable before the face lands.
+ */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/plex-sans-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/plex-sans-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/plex-sans-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Condensed";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/plex-condensed-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/plex-condensed-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/plex-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/plex-mono-500.woff2") format("woff2");
+}
