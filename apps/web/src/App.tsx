@@ -5,6 +5,7 @@ import { AgentDetail } from "./routes/AgentDetail.jsx";
 import { Agents } from "./routes/Agents.jsx";
 import { Approvals } from "./routes/Approvals.jsx";
 import { Chat } from "./routes/Chat.jsx";
+import { Dashboards } from "./routes/Dashboards.jsx";
 import { Providers } from "./routes/Providers.jsx";
 import { Settings } from "./routes/Settings.jsx";
 import { SignIn } from "./routes/SignIn.jsx";
@@ -45,6 +46,7 @@ function RuntimeStatus() {
 /** Page names live in the header so the shell always says where you are. */
 const PAGE_TITLES: Record<string, string> = {
   "/chat": "Chat",
+  "/dashboards": "Dashboards",
   "/agents": "Agents",
   "/approvals": "Approvals",
   "/providers": "Providers",
@@ -77,6 +79,7 @@ function Shell() {
           <div className="rise mx-auto flex min-h-full max-w-4xl flex-col">
             <Routes>
               <Route path="/chat" element={<Chat />} />
+              <Route path="/dashboards" element={<Dashboards />} />
               <Route path="/agents" element={<Agents />} />
               <Route path="/agents/:agentId" element={<AgentDetail />} />
               <Route path="/approvals" element={<Approvals />} />

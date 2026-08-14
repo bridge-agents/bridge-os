@@ -1,7 +1,7 @@
 # HANDOFF — Bridge Agent OS
 
-**Phases 0–5 are complete. The next phase is Phase 6 — the Dashboard
-Builder.**
+**Phases 0–6 are complete. The next phase is Phase 7 — the desktop app and
+local runtime packaging.**
 
 Read in this order before writing code:
 
@@ -9,7 +9,7 @@ Read in this order before writing code:
 2. `PRODUCT_SPEC.md` — what Bridge is, the three deployment modes, the MVP
 3. `ARCHITECTURE.md` — system design, boundaries, data model
 4. `docs/architecture/ADR-0001..0014` — decisions and their reasons
-5. `ROADMAP.md` — Phase 6 onward with acceptance criteria
+5. `ROADMAP.md` — Phase 7 onward with acceptance criteria
 
 ---
 
@@ -165,8 +165,13 @@ client of the same public API, and `@bridge/channels` — a channel adapter
 framework with Telegram (long polling) and Discord (gateway websocket)
 implementations, plus the workspace secrets API a channel binding needs.
 
-**Not implemented (Phase 6+):** the dashboard renderer, schedules/triggers,
-deeper observability, and desktop packaging. Per-agent credential scoping and
+Working on top of Phase 5: the dashboard builder — a closed data-source
+catalogue resolved server-side, a widget registry with a derived layout,
+templates as data, and schema-constrained AI generation and editing with a
+preview before anything is applied.
+
+**Not implemented (Phase 7+):** desktop packaging, schedules/triggers, and
+deeper observability. Per-agent credential scoping and
 container-level sandbox isolation are deferred with reasons in `ROADMAP.md`
 Phase 4; the Phase 5 ceilings (in-process run bus, polled channel replies,
 Discord session resume) are listed in `ROADMAP.md` Phase 5.
@@ -214,33 +219,38 @@ Discord session resume) are listed in `ROADMAP.md` Phase 5.
 - Enforce `runtime.limits` (token/spend budgets) as soon as real runs exist.
   Runaway autonomous spend is a product-killing bug.
 
-## 10. Phase 6 instructions (your next phase)
+## 10. Phase 7 instructions (your next phase)
 
-Objective: the dashboard builder. Full criteria in `ROADMAP.md`.
+Objective: the consumer install — `Bridge.dmg`, a Windows installer, a Linux
+package. Full criteria in `ROADMAP.md`.
 
-The dashboard **schema already exists** (`packages/spec/src/dashboard.ts`) and
-manifests carry an optional `dashboard`; nothing renders it yet. Phase 6 is a
-widget registry mapping schema widget types to React components, data sources
-bound to `/v1` endpoints, a layout engine, the four templates as data, and the
-Architect editing dashboards the way it already edits agents.
+Most of the hard architectural work is already done and should not be
+redesigned:
 
-Things Phase 5 leaves you that Phase 6 will want:
+- **Local mode already has no accounts** (ADR-0014) and binds loopback only.
+  The desktop app inherits this; do not add a login screen.
+- **The runtime is already in-process** with an embedded database, so the app
+  supervises one Node process, not a stack. `apps/cli/src/serve.ts` already
+  starts and health-checks it — that logic is the seed of the supervisor.
+- **No native dependencies anywhere** (ADR-0011), which is what makes
+  packaging for three OSes viable. Keep it that way; the crypto is Node
+  stdlib for exactly this reason.
 
-- `GET /v1/workspaces/:id/runs/:runId/stream` (SSE) for anything live, and
-  `runBus` in `@bridge/runtime` for in-process fan-out.
-- `apps/web/src/api.ts` is the only place the web client talks to the server;
-  add endpoints there, never fetch inline from a component.
-- Workspace secrets (`/v1/workspaces/:id/secrets`) for any data source that
-  needs a credential — names in manifests, values in the store.
+What Phase 7 must actually change:
+- Move the data directory and CLI config out of repo-relative paths into the
+  OS application-data directory, and provider secrets into the platform
+  keychain behind the existing `SecretStore` interface.
+- Serve the built web assets from the API process so the desktop app is one
+  process, not a Vite dev server (`bridge dashboard` currently starts Vite).
 
-Definition of done for Phase 5 (met, keep it working): a user holds a full
-conversation with an agent from the web and from the CLI, sees tool activity
-and approves actions inline, and a channel user talks to a deployed agent —
-all with no Docker running.
+Definition of done for Phase 6 (met, keep it working): a user attaches a
+dashboard from a template or a description, it renders live workspace data,
+and "put my costs at the top" produces a previewed, validated change that is
+applied only on confirmation.
 
 ## 11. Remaining roadmap
 
-Phase 6 dashboards → **7 desktop app + local runtime
+**7 desktop app + local runtime
 packaging (the consumer installer, keychain secrets, background operation) +
 mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 Cloud
 → 12 hardening. Details in `ROADMAP.md`.

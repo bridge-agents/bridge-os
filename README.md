@@ -29,6 +29,11 @@ only, so Bridge provisions a single owner for you and remembers this device.
 Accounts exist for self-hosted servers and Bridge Cloud, where more than one
 person can reach the same install.
 
+Attach a dashboard to any agent — from a template, or by describing what you
+want to see — and it renders live workspace data: spend, runs, failures, and
+whatever is waiting on you. Say "put my costs at the top" and Bridge proposes
+a change you preview before applying.
+
 Agents can use tools (HTTP, files, shell, search, and any MCP server) inside
 an enforced sandbox. Anything destructive pauses the run and waits for you in
 the Approvals queue — nothing runs until you decide.
@@ -84,7 +89,7 @@ of model location — a locally running agent can still use hosted APIs.
 apps/
   api/       Control plane — Hono HTTP API (auth, workspaces, agents, runs, architect)
   worker/    Data plane — hosts the run executor for server deployments
-  web/       Web client — Vite + React SPA (agents, chat, approvals, providers)
+  web/       Web client — Vite + React SPA (chat, dashboards, agents, approvals)
   cli/       `bridge` command line — same public API, bearer tokens
 packages/
   spec/      @bridge/spec      — Bridge Manifest, dashboard schema, permissions, events, templates

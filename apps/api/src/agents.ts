@@ -2,6 +2,7 @@ import { BridgeError, newAgentId } from "@bridge/core";
 import { agents, appendEvent } from "@bridge/db";
 import {
   blankManifest,
+  dashboardTemplates,
   getTemplate,
   instantiateTemplate,
   SPEC_VERSION,
@@ -162,6 +163,26 @@ export function agentRoutes(deps: AppDeps) {
 /** Public catalog; no workspace scope needed since templates are static data. */
 export function templateRoutes() {
   const app = new Hono<AppEnv>();
+
+  /**
+   * Dashboard templates. Served rather than imported by the client so the
+   * browser never needs the schema library, matching how agent templates
+   * already work.
+   */
+  app.get("/dashboards", (c) =>
+    c.json({
+      templates: dashboardTemplates.map(({ id, name, description, dashboard }) => ({
+        id,
+        name,
+        description,
+        pages: dashboard.pages.length,
+        widgets: dashboard.pages
+          .flatMap((page) => page.sections)
+          .reduce((total, section) => total + section.widgets.length, 0),
+        dashboard,
+      })),
+    }),
+  );
 
   app.get("/", (c) =>
     c.json({

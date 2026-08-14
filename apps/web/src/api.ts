@@ -78,6 +78,53 @@ export interface ConversationSummary {
   externalId: string | null;
   createdAt: string;
 }
+/**
+ * Dashboard wire types. Mirrors of @bridge/spec's schema, kept local so the
+ * browser does not ship a validation library — the server is what validates
+ * (ADR-0005), and it rejects anything these types would mis-describe.
+ */
+export interface Widget {
+  id: string;
+  type: string;
+  title?: string;
+  source?: string;
+  chartType?: "line" | "bar" | "area";
+  content?: string;
+  url?: string;
+  agent?: string;
+}
+export interface DashboardSection {
+  id: string;
+  title?: string;
+  widgets: Widget[];
+}
+export interface DashboardPage {
+  id: string;
+  title: string;
+  sections: DashboardSection[];
+}
+export interface Dashboard {
+  version: 1;
+  name: string;
+  theme?: { accent?: string; background?: string; appearance?: "dark" | "light" | "system" };
+  pages: DashboardPage[];
+  navigation?: string[];
+}
+export interface DashboardTemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  pages: number;
+  widgets: number;
+  dashboard: Dashboard;
+}
+
+export type SourceData =
+  | { kind: "metric"; value: number; unit?: string }
+  | { kind: "series"; points: { label: string; value: number }[]; unit?: string }
+  | { kind: "rows"; columns: string[]; rows: (string | number | null)[][] }
+  | { kind: "unavailable"; reason: string };
+
 export interface SecretRef {
   id: string;
   name: string;
@@ -145,6 +192,40 @@ export const api = {
   workspaces: () => get<{ workspaces: Workspace[] }>("/v1/workspaces"),
 
   templates: () => get<{ templates: TemplateSummary[] }>("/v1/templates"),
+  dashboardTemplates: () =>
+    get<{ templates: DashboardTemplateSummary[] }>("/v1/templates/dashboards"),
+
+  /** Resolve one dashboard data source. Unknown names 404 by design. */
+  data: (workspaceId: string, source: string) =>
+    get<{ data: SourceData }>(`/v1/workspaces/${workspaceId}/data/${source}`),
+
+  /**
+   * `designer` names the provider and model to design with. The agent's own
+   * model is passed where we know it: providers Bridge has no default for —
+   * a local Ollama, say — would otherwise refuse with "specify a model".
+   */
+  draftDashboard: (
+    workspaceId: string,
+    description: string,
+    name?: string,
+    designer?: { provider?: string; model?: string },
+  ) =>
+    send<{ dashboard: Dashboard; attempts: number }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/architect/dashboard/draft`,
+      { description, name, ...designer },
+    ),
+  editDashboard: (
+    workspaceId: string,
+    agentId: string,
+    instruction: string,
+    designer?: { provider?: string; model?: string },
+  ) =>
+    send<{ dashboard: Dashboard; attempts: number; current: Dashboard }>(
+      "POST",
+      `/v1/workspaces/${workspaceId}/architect/agents/${agentId}/dashboard/edit`,
+      { instruction, ...designer },
+    ),
 
   agents: (workspaceId: string) =>
     get<{ agents: AgentSummary[] }>(`/v1/workspaces/${workspaceId}/agents`),

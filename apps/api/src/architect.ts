@@ -2,7 +2,16 @@ import { BridgeError } from "@bridge/core";
 import { agents } from "@bridge/db";
 import { connectedProviders, providerResolver } from "@bridge/runtime";
 import type { ChatMessage, Provider } from "@bridge/sdk";
-import { blankManifest, type Manifest, safeParseManifest, slugify } from "@bridge/spec";
+import {
+  blankDashboard,
+  blankManifest,
+  type Dashboard,
+  DashboardSchema,
+  describeDataSources,
+  type Manifest,
+  safeParseManifest,
+  slugify,
+} from "@bridge/spec";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -77,17 +86,24 @@ function extractJson(text: string): unknown {
 }
 
 /**
- * Ask the model for a manifest, feeding validation errors back until it
- * produces one that parses. The user never sees an invalid proposal.
+ * Ask the model for a JSON document, feeding validation errors back until it
+ * produces one that parses. The user never sees an invalid proposal — which
+ * is the whole guarantee, so the loop is shared rather than reimplemented per
+ * document type.
  */
-async function proposeManifest(options: {
+async function proposeJson<T>(options: {
   provider: Provider;
   model: string;
+  system: string;
   context: string;
   instruction: string;
-}): Promise<{ manifest: Manifest; attempts: number }> {
+  /** Validates a candidate; returning issues asks the model to try again. */
+  parse: (value: unknown) => { success: true; data: T } | { success: false; issues: string };
+  /** Names the document in error messages, e.g. "manifest". */
+  noun: string;
+}): Promise<{ value: T; attempts: number }> {
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: options.system },
     { role: "user", content: `${options.context}\n\n${options.instruction}` },
   ];
 
@@ -100,15 +116,13 @@ async function proposeManifest(options: {
     });
 
     if (result.stopReason === "refusal") {
-      throw new BridgeError("provider_error", "the model declined to design this agent");
+      throw new BridgeError("provider_error", `the model declined to design this ${options.noun}`);
     }
 
     try {
-      const parsed = safeParseManifest(extractJson(result.message.content));
-      if (parsed.success) return { manifest: parsed.data, attempts: attempt };
-      lastIssues = parsed.error.issues
-        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-        .join("\n");
+      const parsed = options.parse(extractJson(result.message.content));
+      if (parsed.success) return { value: parsed.data, attempts: attempt };
+      lastIssues = parsed.issues;
     } catch (error) {
       lastIssues = error instanceof Error ? error.message : "unparseable response";
     }
@@ -117,16 +131,106 @@ async function proposeManifest(options: {
       { role: "assistant", content: result.message.content },
       {
         role: "user",
-        content: `That manifest is invalid:\n${lastIssues}\n\nReply with the corrected manifest as one JSON object.`,
+        content: `That ${options.noun} is invalid:\n${lastIssues}\n\nReply with the corrected ${options.noun} as one JSON object.`,
       },
     );
   }
 
   throw new BridgeError(
     "provider_error",
-    "the model could not produce a valid manifest",
-    lastIssues ? [{ path: "manifest", message: lastIssues }] : undefined,
+    `the model could not produce a valid ${options.noun}`,
+    lastIssues ? [{ path: options.noun, message: lastIssues }] : undefined,
   );
+}
+
+const issuesOf = (error: { issues: { path: PropertyKey[]; message: string }[] }) =>
+  error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("\n");
+
+async function proposeManifest(options: {
+  provider: Provider;
+  model: string;
+  context: string;
+  instruction: string;
+}): Promise<{ manifest: Manifest; attempts: number }> {
+  const { value, attempts } = await proposeJson<Manifest>({
+    ...options,
+    system: SYSTEM_PROMPT,
+    noun: "manifest",
+    parse: (raw) => {
+      const parsed = safeParseManifest(raw);
+      return parsed.success
+        ? { success: true, data: parsed.data }
+        : { success: false, issues: issuesOf(parsed.error) };
+    },
+  });
+  return { manifest: value, attempts };
+}
+
+/**
+ * Dashboards are generated against the same closed source catalogue the
+ * renderer resolves, so the model cannot invent a data binding that silently
+ * renders empty.
+ */
+const DASHBOARD_PROMPT = `You design Bridge dashboards. You reply with ONE JSON object — a Bridge Dashboard — and nothing else. No prose, no markdown fences.
+
+The dashboard shape:
+{
+  "version": 1,
+  "name": string,
+  "theme": { "accent": "#RRGGBB", "appearance": "dark" | "light" | "system" },
+  "pages": [
+    {
+      "id": lowercase-hyphenated,
+      "title": string,
+      "sections": [
+        {
+          "id": lowercase-hyphenated,
+          "title": string,
+          "widgets": [ ...widgets ]
+        }
+      ]
+    }
+  ]
+}
+
+Widgets. Every widget has "id" (lowercase-hyphenated, unique within the page) and an optional "title":
+- { "type": "metric", "source": <metric source> }            one big number
+- { "type": "chart", "source": <series source>, "chartType": "line" | "bar" | "area" }
+- { "type": "table", "source": <rows source> }
+- { "type": "activity", "source": "events.recent" }
+- { "type": "logs", "source": "logs.recent" }
+- { "type": "approvalQueue" }                                 things waiting on a human
+- { "type": "agentStatus" }                                   every agent and its state
+- { "type": "text", "content": string }                       a note, no data binding
+
+Data sources you may use — these are the only ones that exist:
+%SOURCES%
+
+Rules you must follow:
+- A "metric" widget must use a metric source, "chart" a series source, "table" a rows source. Using the wrong kind renders an empty panel.
+- Never invent a source name. If the user asks for something no source provides, use a "text" widget saying so, or leave it out.
+- Widget ids must be unique within their page.
+- Put the thing the user cares about most in the first section.
+- Prefer few, meaningful panels over many. A dashboard is read at a glance.`;
+
+async function proposeDashboard(options: {
+  provider: Provider;
+  model: string;
+  context: string;
+  instruction: string;
+}): Promise<{ dashboard: Dashboard; attempts: number }> {
+  const { value, attempts } = await proposeJson<Dashboard>({
+    ...options,
+    system: DASHBOARD_PROMPT.replace("%SOURCES%", describeDataSources()),
+    noun: "dashboard",
+    parse: (raw) => {
+      const parsed = DashboardSchema.safeParse(raw);
+      return parsed.success
+        ? { success: true, data: parsed.data }
+        : { success: false, issues: issuesOf(parsed.error) };
+    },
+  });
+  return { dashboard: value, attempts };
 }
 
 export function architectRoutes(deps: AppDeps) {
@@ -228,7 +332,72 @@ export function architectRoutes(deps: AppDeps) {
     return c.json({ manifest, attempts, current: agent.manifest });
   });
 
+  /** Design a dashboard from a description. Returns a proposal to review. */
+  app.post("/dashboard/draft", async (c) => {
+    const body = await parseBody(
+      c,
+      z.object({
+        description: z.string().min(1).max(20_000),
+        name: z.string().max(120).optional(),
+        provider: z.string().optional(),
+        model: z.string().optional(),
+      }),
+    );
+    const workspaceId = c.get("workspaceId");
+    const designer = await resolveDesigner(workspaceId, body.provider, body.model);
+
+    const { dashboard, attempts } = await proposeDashboard({
+      provider: designer.provider,
+      model: designer.model,
+      context: [
+        `Use "${body.name?.trim() || "Dashboard"}" as the dashboard name.`,
+        "Here is the minimal valid dashboard for reference:",
+        JSON.stringify(blankDashboard(body.name?.trim() || "Dashboard"), null, 2),
+      ].join("\n"),
+      instruction: `Design a dashboard for this request:\n${body.description}`,
+    });
+
+    return c.json({ dashboard, attempts });
+  });
+
+  /**
+   * Edit an agent's dashboard in natural language. Like the agent editor it
+   * returns a proposal and saves nothing: the user reviews the change and
+   * PUTs the manifest through the ordinary endpoint, so an AI edit passes
+   * exactly the validation a hand-written one does.
+   */
+  app.post("/agents/:agentId/dashboard/edit", async (c) => {
+    const body = await parseBody(
+      c,
+      z.object({
+        instruction: z.string().min(1).max(20_000),
+        provider: z.string().optional(),
+        model: z.string().optional(),
+      }),
+    );
+    const workspaceId = c.get("workspaceId");
+
+    const [agent] = await deps.db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.id, c.req.param("agentId"))));
+    if (!agent) throw new BridgeError("not_found", "agent not found");
+
+    const manifest = agent.manifest as { dashboard?: unknown; meta?: { name?: string } };
+    const current = manifest.dashboard ?? blankDashboard(manifest.meta?.name ?? "Dashboard");
+
+    const designer = await resolveDesigner(workspaceId, body.provider, body.model);
+    const { dashboard, attempts } = await proposeDashboard({
+      provider: designer.provider,
+      model: designer.model,
+      context: ["This is the current dashboard:", JSON.stringify(current, null, 2)].join("\n"),
+      instruction: `Apply this change and return the complete updated dashboard:\n${body.instruction}`,
+    });
+
+    return c.json({ dashboard, attempts, current });
+  });
+
   return app;
 }
 
-export { proposeManifest };
+export { proposeDashboard, proposeManifest };

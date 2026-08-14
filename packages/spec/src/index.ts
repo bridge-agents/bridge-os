@@ -9,6 +9,12 @@ export {
   WidgetSchema,
 } from "./dashboard.js";
 export {
+  blankDashboard,
+  type DashboardTemplate,
+  dashboardTemplates,
+  getDashboardTemplate,
+} from "./dashboards.js";
+export {
   type BridgeEvent,
   BridgeEventSchema,
   createEvent,
@@ -47,6 +53,15 @@ export {
   type PermissionRule,
   PermissionRuleSchema,
 } from "./permissions.js";
+export {
+  DATA_SOURCES,
+  describeDataSources,
+  getDataSource,
+  isDataSource,
+  type SourceData,
+  type SourceDefinition,
+  type SourceKind,
+} from "./sources.js";
 export { type Template, TemplateSchema } from "./template.js";
 export {
   blankManifest,

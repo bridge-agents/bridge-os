@@ -89,7 +89,10 @@ describe("login", () => {
     expect(await wrongPassword.json()).toEqual(await unknownUser.json());
   });
 
-  it("rate-limits repeated attempts against one account", async () => {
+  // Fifteen concurrent logins mean fifteen scrypt hashes, deliberately slow.
+  // Under a loaded parallel run that exceeds the default 5s, so give the test
+  // the time the work actually takes rather than letting it flake.
+  it("rate-limits repeated attempts against one account", { timeout: 30_000 }, async () => {
     await signUp(ctx.app, "target@example.com");
     const attempt = () =>
       ctx.app.request(

@@ -6,6 +6,7 @@ import { agentRoutes, templateRoutes } from "./agents.js";
 import { approvalRoutes } from "./approvals.js";
 import { architectRoutes } from "./architect.js";
 import { authRoutes } from "./auth.js";
+import { dataRoutes } from "./data.js";
 import type { AppDeps, AppEnv } from "./http.js";
 import { providerRoutes } from "./providers.js";
 import { runRoutes } from "./runs.js";
@@ -84,6 +85,7 @@ export function buildApp(deps: AppDeps) {
   app.route("/v1/workspaces/:workspaceId/agents", agentRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/secrets", secretRoutes(deps));
+  app.route("/v1/workspaces/:workspaceId/data", dataRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));
   app.route("/v1/workspaces/:workspaceId/approvals", approvalRoutes(deps));
   app.route("/v1/workspaces/:workspaceId", streamRoutes(deps));

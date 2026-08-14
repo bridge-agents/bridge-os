@@ -1,7 +1,8 @@
 # Bridge Agent OS — Roadmap
 
-Phases 0–5 are **complete**: architecture, foundation, accounts, the agent
-runtime, tools/permissions/approvals, and chat/CLI/channels. Phase 6 is next. Each phase lists
+Phases 0–6 are **complete**: architecture, foundation, accounts, the agent
+runtime, tools/permissions/approvals, chat/CLI/channels, and dashboards.
+Phase 7 is next. Each phase lists
 objective, dependencies, deliverables, acceptance criteria, tests, and risks.
 
 Ordering is intentional: every phase leaves a runnable, testable system.
@@ -207,36 +208,54 @@ limited beyond message splitting.
 
 ---
 
-## Phase 6 — Dashboard Builder ← NEXT
+## Phase 6 — Dashboard Builder ✅ COMPLETE
 
 **Objective:** Render, template, and AI-edit dashboards from the schema.
 
-**Depends on:** Phase 5.
+**Delivered**
+- **A closed data-source catalogue** (`packages/spec/src/sources.ts`): 14
+  named sources in three shapes — metric, series, rows. Widget `source` is a
+  free string in the schema, so without a catalogue a dashboard would decide
+  what data to read; naming them makes the set auditable, gives the AI a
+  vocabulary it cannot exceed, and makes an unknown name render as a labelled
+  gap instead of an error.
+- **Server-side resolution** (`GET /v1/workspaces/:id/data/:source`).
+  Aggregation happens in SQL — "spend per day" never means shipping every run
+  to the browser. Every query is workspace-scoped.
+- **Renderer**: widget registry → React components, with a derived layout
+  (documents say *what*, never pixel coordinates, which is what makes AI
+  edits safe — there are no positions to corrupt). Charts are ~120 lines of
+  SVG rather than a charting dependency to ship on three desktop platforms.
+- **Templates as data** (Overview, Spend, Operations, Activity) plus blank,
+  validated by the same schema as anything hand- or AI-written, and asserted
+  to bind only to sources that exist so no template ships a dead panel.
+- **AI generation and natural-language editing**, schema-constrained: the
+  retry loop feeds validation errors back and gives up rather than returning
+  something invalid. Proposals render as a live preview and are saved by
+  PUTting the manifest through the ordinary agent endpoint, so an AI edit
+  passes exactly the validation a hand-written one does.
 
-**Deliverables**
-- Dashboard renderer (widget registry → React components) bound to API data
-  sources; layout engine; navigation.
-- Dashboard templates (Business, Personal, School, Fitness) as data; blank
-  dashboards; per-agent attach.
-- Theme tokens: accent/background/appearance customisation only; Bridge
-  branding fixed.
-- AI dashboard generation and natural-language editing (schema-constrained
-  edits with validation + preview before apply).
+**Acceptance criteria — met.** Verified in a browser: none/template/scratch
+all reachable; typing "Put my agent costs at the top" produced a valid
+document with the costs section moved first, rendered as a preview with
+Apply/Discard, and saved nothing until applied. Invalid edits are rejected by
+the loop and never reach the renderer.
 
-**Acceptance criteria**
-- User picks none/template/scratch; "Put my agent costs at the top" produces
-  a valid schema diff and safe re-render; invalid AI edits are rejected, not
-  rendered.
+**Tests:** 12 data-source tests (aggregation, empty-state, tenant isolation,
+catalogue boundary), 13 template tests (round-trip, every source exists,
+unique widget ids), 13 AI property tests (seven invalid shapes each rejected,
+bounded attempts, refusal surfaced), 14 widget data-binding tests.
 
-**Tests:** schema round-trip (generate → validate → render snapshot), widget
-data-binding tests, AI edit property tests (output always validates).
-
-**Risks:** widget sprawl — ship the 12 core widgets, resist bespoke ones;
-data-binding performance (paginate/aggregate server-side).
+**Known ceilings:** dashboards live on agents, so there is no workspace-level
+"home" dashboard yet. Widgets refresh by polling (15s; approvals 5s) rather
+than subscribing. `taskList` and `calendar` have no backing data and render
+as unavailable — tasks arrive in Phase 8. Widget refresh is not covered by a
+DOM test; driving the interval needs fake timers installed before mount,
+which deadlocks testing-library's async helpers.
 
 ---
 
-## Phase 7 — Desktop App + Local Runtime Packaging (and Mobile)
+## Phase 7 — Desktop App + Local Runtime Packaging (and Mobile) ← NEXT
 
 **Objective:** Deliver the consumer install: `Bridge.dmg`, a Windows
 installer and a Linux package that a normal user runs with no infrastructure

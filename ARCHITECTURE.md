@@ -125,6 +125,7 @@ Nothing imports from apps/*.
 | Web | Vite + React SPA, Tailwind v4 + token CSS | ADR-0006 |
 | Adapters | `@bridge/sdk` interfaces (provider/tool/channel) | ADR-0007 |
 | Local desktop auth | One auto-provisioned owner, loopback only, no sign-in | ADR-0014 |
+| Dashboard data | Closed source catalogue, resolved and aggregated server-side | `packages/spec/src/sources.ts` |
 | Deployment targets | `local` / `self-hosted` / `cloud`, one portable Manifest | ADR-0008 |
 | Secrets & crypto | `SecretStore` interface; Node stdlib crypto, no native deps | ADR-0011 |
 | Run dispatch | Claimed from the database with `SKIP LOCKED`, heartbeated | ADR-0012 |

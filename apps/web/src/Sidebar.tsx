@@ -227,6 +227,7 @@ export function Sidebar() {
 
   const primary: NavItem[] = [
     { to: "/chat", label: "Chat", icon: ChatIcon },
+    { to: "/dashboards", label: "Dashboards", icon: DashboardIcon },
     { to: "/agents", label: "Agents", icon: AgentsIcon },
     { to: "/approvals", label: "Approvals", icon: ApprovalsIcon, badge: pendingApprovals },
     { to: "/providers", label: "Providers", icon: ProvidersIcon },
@@ -234,8 +235,7 @@ export function Sidebar() {
   ];
 
   const planned: NavItem[] = [
-    { to: "#", label: "Dashboards", icon: DashboardIcon, planned: "Phase 6" },
-    { to: "#", label: "Channels", icon: ChannelsIcon, planned: "Phase 6" },
+    { to: "#", label: "Channels", icon: ChannelsIcon, planned: "Phase 7" },
     { to: "#", label: "Automations", icon: AutomationIcon, planned: "Phase 8" },
     { to: "#", label: "Observability", icon: ObservabilityIcon, planned: "Phase 9" },
     { to: "#", label: "Knowledge", icon: KnowledgeIcon, planned: "Phase 9" },
