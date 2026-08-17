@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@bridge/commands": "workspace:*",
     "@bridge/core": "workspace:*",
     "tsx": "^4.19.0"
   },

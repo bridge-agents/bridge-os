@@ -1,11 +1,19 @@
 # Bridge Agent OS — Roadmap
 
-Phases 0–6 are **complete**: architecture, foundation, accounts, the agent
-runtime, tools/permissions/approvals, chat/CLI/channels, and dashboards.
-Phase 7 is next. Each phase lists
+Phases 0–8 are **complete**: architecture, foundation, accounts, the agent
+runtime, tools/permissions/approvals, chat/CLI/channels, dashboards, the
+desktop app, and automation. Phase 9 is next. Each phase lists
 objective, dependencies, deliverables, acceptance criteria, tests, and risks.
 
+Mobile was scoped into Phase 7 and moved out of it: a mobile client's reason
+to exist is approving things while away from the machine, and the push path
+that makes that work does not exist until Cloud (Phase 11).
+
 Ordering is intentional: every phase leaves a runnable, testable system.
+
+> **Completion addendum:** several original Phase 2-7 deferrals have since
+> shipped. See `docs/PHASES_1_7_COMPLETION.md` before treating the historical
+> deferred/known-ceiling lists below as current implementation status.
 
 A standing requirement for every phase from here on: **nothing may make
 Docker, a Postgres server, or a Redis server a prerequisite for a desktop
@@ -255,79 +263,214 @@ which deadlocks testing-library's async helpers.
 
 ---
 
-## Phase 7 — Desktop App + Local Runtime Packaging (and Mobile) ← NEXT
+## Phase 7 — Desktop App + Local Runtime Packaging ✅ COMPLETE (mobile deferred)
 
-**Objective:** Deliver the consumer install: `Bridge.dmg`, a Windows
-installer and a Linux package that a normal user runs with no infrastructure
-knowledge — plus mobile as a control surface.
+**Objective:** Deliver the consumer install: a real installer that a normal
+user runs with no infrastructure knowledge.
 
-**Depends on:** Phase 5 (6 for dashboards). The driver work it relies on
-(embedded database, in-process queue, secrets interface) landed in Phase 2.
-
-**Deliverables**
-- Desktop shell (Tauri preferred — small bundle, no Chromium, and the runtime
-  is already pure JS/WASM per ADR-0011) wrapping the web client with native
-  menus, notifications and deep links.
-- **Local runtime supervision:** the app starts, monitors, restarts and stops
-  the api/worker processes; picks a free port; stores data under the platform
-  app-data directory; migrates the embedded database on launch and on update.
-- **Background operation:** explicit user setting for whether Bridge may run
-  in the background; tray/menu-bar presence; honest per-agent status
-  (running, paused, stopped, waiting, offline) and a clear statement that
-  local agents run only while the device is available. Respect OS limits,
-  battery and user settings.
-- **Keychain-backed `SecretStore`** implementation (macOS Keychain, Windows
-  Credential Manager, libsecret) replacing the encrypted-row store on desktop.
-- Installers, code signing/notarisation, and an auto-update channel.
-- Mobile via Expo/React Native sharing the API client + design tokens (not
-  web DOM code), controlling a runtime on desktop/server/Cloud, with push
-  notifications for approvals. No promise of 24/7 on-device execution.
+**Delivered**
+- **Desktop shell** (`apps/desktop`) on Electron rather than Tauri, with the
+  reasoning written down in ADR-0015: what is being packaged is a Node
+  server, so Tauri would ship a Rust binary *and* a Node sidecar — two
+  languages and an IPC boundary to save perhaps 50 MB from an app that
+  already carries a WASM Postgres. Electron's binary *is* the Node runtime
+  the API needs, so the app ships one runtime, not two.
+- **Runtime supervision** (`supervisor.ts`, no Electron import, so it is
+  testable without a display): starts the API, waits until it actually
+  answers rather than until the process exists, restarts it on a crash with
+  backoff, and **stops trying** after repeated fast failures with an honest
+  message. A first start that fails is reported, never retried behind an
+  error dialog. The OS picks the port — an installed app cannot assume 4000
+  is free — and the API publishes it to `api.url`, which is also how a
+  terminal `bridge` finds a desktop instance.
+- **Application-data directories** (`packages/core/src/paths.ts`): database,
+  agent workspaces, uploads and CLI config move out of repo-relative paths
+  to the platform location. A repository with an existing `./.bridge` keeps
+  using it, and an existing `~/.bridge/config.json` is migrated rather than
+  abandoned.
+- **The master key in the OS credential store** (ADR-0016) — macOS Keychain,
+  libsecret, Windows DPAPI, reached through the tools each OS already ships
+  so no native module is added. This closes a real bug: the local API used
+  to generate an *ephemeral* key at boot, so restarting silently orphaned
+  every provider credential the user had connected. Where no credential
+  store exists, an owner-only key file is used and the app says so.
+- **One process, one origin**: the API serves the built web client with a
+  history fallback for client routes, `no-cache` on the shell and immutable
+  caching on hashed assets. Routes are mounted at `/` *and* `/api`, so one
+  bundle works behind the Vite dev proxy and inside the packaged app.
+  `bridge dashboard` no longer starts Vite when a build is present.
+- **Background operation** as an explicit setting, off by default: with it
+  off, closing the window quits Bridge and stops agents; with it on, closing
+  puts it away and agents keep running. The tray states which is true rather
+  than leaving it to be discovered. Native menus, approval notifications
+  that deep-link to the queue, `bridge://` links, and a single-instance lock
+  (two copies would open the same embedded database).
+- **Installers**: `electron-builder` configuration for dmg + zip (macOS
+  arm64/x64), NSIS (Windows x64/arm64) and AppImage + deb (Linux), hardened
+  runtime entitlements, and `electron-updater` wired to a generic feed.
 
 **Acceptance criteria**
-- A user with no developer tooling installs Bridge, opens it, and completes
-  onboarding → agent → provider → chat without ever seeing Docker, a
-  terminal, a port, or a database.
-- Closing the window does not stop agents the user configured to run in the
-  background; quitting Bridge does, and the UI says so.
-- Approve a pending action from a phone notification.
+- ✅ *Install and use with no developer tooling.* Verified from the built
+  `Bridge-0.1.0-arm64.dmg`: mounted, copied to a directory, launched. It
+  created its data directory, migrated a fresh embedded database, provisioned
+  the local owner and workspace, and opened the UI — no Docker, no terminal,
+  no port, no sign-in. Also verified as an *upgrade*: the same build launched
+  against a data directory an earlier build created, which is the case the
+  risks section calls out.
+- ✅ *Closing the window does not stop background agents; quitting does, and
+  the UI says so.* Verified both ways against the installed app: with the
+  setting off, closing the window shut the runtime down (the address file is
+  removed on clean exit); with it on, the runtime kept answering `/health`
+  after the window closed.
+- ❌ *Approve a pending action from a phone notification.* Not delivered —
+  mobile is deferred (below). Desktop notifications do reach the approval
+  queue.
 
-**Tests:** packaged-app smoke test per OS (install → launch → create agent →
-run); runtime supervisor restart/crash recovery; keychain store contract
-tests against the same `SecretStore` suite; shared API-client suite on all
-clients.
+**Tests:** 6 supervisor tests driving a real child process — faking `spawn`
+would only exercise the parts that never break — covering ready-only-when-
+answering, restart after a crash, giving up on a crash loop, no restart after
+a deliberate stop, and a loud first-start failure. 5 approval-watcher tests
+(announce once, announce again only after a decision, stay quiet while the
+runtime is down). 7 secret-key tests (env wins, key survives a restart,
+honest storage reporting, 0600 fallback, adoption of an on-disk key). 5 path
+tests. 8 static-serving tests (deep links, cache rules, API paths staying
+JSON under both mounts).
 
-**Risks:** per-OS packaging and signing burden (budget real time for it);
-background execution policy differences; update + database migration
-interaction — test upgrades with existing data, not just clean installs.
+**Deferred, with reasons**
+- **Mobile (Expo/React Native) and push notifications.** Not started. Push
+  for approvals needs a delivery service that does not exist until Bridge
+  Cloud (Phase 11) — a local, loopback-only runtime has nothing to push
+  *from*. Building the client before that path exists would mean building it
+  twice.
+- **Code signing and notarisation.** The macOS build is signed with whatever
+  local development identity is present and explicitly *not* notarised, so
+  Gatekeeper will warn on another machine. Real distribution needs an Apple
+  Developer ID, an Apple ID for notarisation, and a Windows signing
+  certificate — credentials, not code. The entitlements and configuration
+  they plug into are in place.
+- **Windows and Linux artifacts.** Configured but not built here; they need
+  those runners (or containers) in CI. Only the macOS artifacts have been
+  produced and run.
+- **A packaged-app smoke test per OS.** The install → launch → clean first
+  run → upgrade → close → quit sequence was verified by hand, not automated.
+  Automating it wants CI runners per platform, which is the same missing
+  piece as the artifacts above.
+
+**Known ceilings:** the window uses the ordinary OS title bar — an inset one
+overlaps the sidebar's own header, and fixing that properly means teaching
+the web client it is inside Electron, which is exactly the coupling that
+keeps local, self-hosted and Cloud one product. Approvals are polled once a
+minute rather than pushed. The update feed URL is a placeholder until there
+is a release host.
 
 ---
 
-## Phase 8 — Automation, Scheduling and Autonomous Operation
+## Phase 8 — Automation, Scheduling and Autonomous Operation ✅ COMPLETE
 
-**Objective:** Always-running Agent OS: schedules, triggers, resumability,
-health.
+**Objective:** Always-running Agent OS: schedules, triggers, loops, health.
 
-**Depends on:** Phase 3 (approvals from 4).
+**Delivered**
+- **Schedules that survive the machine being off.** Automations are claimed
+  from the database, not held as BullMQ repeatables as this phase originally
+  specified — a repeatable job needs Redis, and nothing a desktop user
+  depends on may (ADR-0008/0010). It is the same pattern runs already use
+  (ADR-0012), and it answers a laptop that was asleep, a process that
+  crashed, and a second instance starting, all the same way.
+- **Two ways to say when**: cron with a real timezone, evaluated in the
+  schedule's own zone so "weekdays at 9am" keeps meaning 9am where the user
+  lives across a daylight-saving change; and intervals (`every: "15m"`),
+  because the most common automation anyone wants is the one cron expresses
+  worst.
+- **Loops that end.** `maxRuns`, `until`, and `maxConsecutiveFailures` — the
+  last defaulting to 5 rather than infinity. An automation nobody stops is
+  the failure mode of this whole feature: it runs while you sleep, spends
+  money, and the first you hear of it is the bill. Bounds are enforced by
+  the runner, never left to the agent to respect.
+- **Event automations**: an event in the log starts a run. Delivery is
+  exactly-once against a sequence rather than a timestamp, because two events
+  in the same millisecond are indistinguishable by time — one would be
+  delivered twice or not at all.
+- **The guards that make autonomy safe to leave on**: firing is a
+  compare-and-swap inside the transaction that inserts the run, so two
+  runners produce one run and a crash produces both or neither; an automation
+  never stacks on itself; a run over the agent's daily budget is skipped with
+  a reason rather than disabling the schedule, because tomorrow it works
+  again; and automated runs cannot trigger event automations, which is what
+  rules out a cycle.
+- **A workspace timezone** (Settings), which is what "9am" means for any
+  schedule that does not name its own zone — validated against the platform's
+  own zone database, because a typo here is a schedule that fires at the
+  wrong hour forever.
+- **Control**: pause, resume, edit, delete and run-now, in the UI, the CLI
+  and the chat box. Editing and deleting write the *agent's manifest*, not
+  the row: a row changed on its own would be silently reverted by the next
+  reconcile. Resuming rejoins the rhythm from now instead of firing for every slot
+  it missed; resuming a *finished* loop starts its count over, because
+  otherwise "resume" is a dead end that re-completes on the next tick.
+- **One command catalogue for every surface** (`@bridge/commands`): `bridge
+  approve x` in a terminal and `/approve x` in the chat box are the same
+  value, not two implementations that drift. Commands return structured
+  results — text, a table, somewhere to go — and each client renders them.
+  Typing `/` in any chat box opens the palette; the CLI's own dispatch was
+  rewritten to run the same definitions, and its duplicated implementations
+  deleted rather than left to rot.
+- **An Automations page** showing what runs next, why something stopped, and
+  how to stop it — plus the reason in words, never hidden behind a hover.
+- **Conversations that say what happened.** A run only wrote to its
+  conversation on success, so a scheduled run that failed — or one still
+  going — left a thread that looked identical to a brand new chat. The
+  prompt is now recorded when the run is created, and the conversation
+  carries its runs, so a failure reads as a failure instead of as silence.
 
-**Deliverables:** cron schedules (BullMQ repeatables) from Manifest triggers;
-event automations (event → agent task); long-running jobs with checkpoints;
-retry policies per agent; watchdogs + agent health status; failure recovery
-(dead-letter queue + operator surface).
+**Acceptance criteria**
+- ✅ *Manifest trigger → execution.* Verified live: an agent with three
+  schedules (a New York weekday cron, a 30s interval, and a 3-run loop) was
+  deployed against a running Bridge. The cron resolved to Monday 13:00 UTC —
+  9am in New York, across the DST boundary — the intervals fired on time, and
+  the bounded loop stopped itself after exactly 3 runs with the reason
+  "finished after 3 runs".
+- ✅ *No duplicate side effects.* The claim is a compare-and-swap in the same
+  transaction as the run insert; two runners ticking concurrently produce one
+  run, which is asserted rather than argued.
+- ✅ *Users see automation health.* Status, the reason it stopped, next run,
+  and run count, in the page and in `/automations`.
+- ⚠️ *"Run the research agent every weekday morning" from natural language.*
+  The architect writes and validates the whole manifest, and its prompt now
+  teaches the trigger shape — cron versus interval, timezones, and the rule
+  that a bounded task must say where it ends. **This path is not verified
+  end to end**: doing so needs a real model credential, which this
+  environment has none of. Everything downstream of the manifest is verified.
 
-**Acceptance criteria:** "Run the research agent every weekday morning"
-works from natural language → Manifest trigger → execution; a crashed worker
-mid-job resumes without duplicate side effects (idempotency keys); users see
-agent health.
+**Tests:** 41 in the runtime — 17 on scheduling arithmetic (timezones, DST,
+loop endings) and 24 driving the runner against a real database (racing
+runners, a missed window, crash loops, budgets, the cycle guard). 13 on the
+API (control, and tenant isolation). 18 on the command registry, including
+one asserting every command reaches Bridge only through `/v1` endpoints.
 
-**Tests:** schedule drift/timezone tests, chaos test (kill workers under
-load), duplicate-delivery idempotency, DLQ replay.
+**Deferred, with reasons**
+- **A dead-letter queue and replay.** Failed runs are visible per agent and a
+  failing automation disables itself with a reason, but there is no separate
+  queue of poisoned work to inspect and re-drive. That belongs with the run
+  history and search work in Phase 9 rather than as a second surface here.
+- **Agent-level health beyond automations.** An automation reports its own
+  state; a rollup of "is this agent well" is Phase 9.
+- **Chained automations.** An automated run's events cannot trigger another
+  automation. That rules out runaway cycles, and it also rules out chaining;
+  doing both needs a depth or provenance model, which is not worth its
+  failure modes until someone actually wants it.
 
-**Risks:** runaway automations — spend/токen limits enforced here at the
-latest; timezone correctness (store TZ per schedule).
+**Known ceilings:** the runner polls every 5s and re-reads manifests every
+60s, so a schedule added by editing an agent's manifest directly starts
+within a minute — deploying, stopping, or editing through the Automations
+page reconciles immediately. Firing
+is once per pass per automation, so a burst of events becomes a paced queue
+rather than a stampede — correct, but not fast. Local schedules only run
+while Bridge is running; the desktop app says so, but there is no catch-up
+report of what was missed.
 
 ---
 
-## Phase 9 — Observability
+## Phase 9 — Observability ← NEXT
 
 **Objective:** Users understand exactly what their autonomous system does.
 
@@ -378,7 +521,10 @@ validate; rollback integrity.
 **Deliverables:** hosted runtime, managed Postgres/queues, KMS-backed
 secrets, sandbox infra, backups, org/teams auth, managed deployment, usage
 limits + metering + billing, monitoring, update channel, cloud↔local
-connection.
+connection. **Mobile (Expo/React Native) lands here**, deferred from Phase 7:
+it shares the API client and design tokens, not web DOM code, and its point
+is approving a paused run from a push notification — which needs a delivery
+service a loopback-only local runtime cannot provide.
 
 **Acceptance criteria:** a Community manifest deploys unchanged to Cloud;
 Community remains fully functional standalone.

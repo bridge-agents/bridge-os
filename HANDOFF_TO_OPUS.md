@@ -1,15 +1,19 @@
 # HANDOFF — Bridge Agent OS
 
-**Phases 0–6 are complete. The next phase is Phase 7 — the desktop app and
-local runtime packaging.**
+**Phases 0–8 are complete. The next phase is Phase 9 — observability.**
+
+> Read `docs/PHASES_1_7_COMPLETION.md` before using the historical
+> "not implemented" and "unresolved" lists below. It records the later
+> Phase 1-7 catch-up work, including distinct API tokens, invitations, OIDC,
+> durable streaming, knowledge, search, channels, and workspace dashboards.
 
 Read in this order before writing code:
 
 1. This file
 2. `PRODUCT_SPEC.md` — what Bridge is, the three deployment modes, the MVP
 3. `ARCHITECTURE.md` — system design, boundaries, data model
-4. `docs/architecture/ADR-0001..0014` — decisions and their reasons
-5. `ROADMAP.md` — Phase 7 onward with acceptance criteria
+4. `docs/architecture/ADR-0001..0016` — decisions and their reasons
+5. `ROADMAP.md` — Phase 9 onward with acceptance criteria
 
 ---
 
@@ -58,8 +62,9 @@ TypeScript modular monolith, pnpm + Turborepo:
 
 ```text
 apps/api/src/
-  app.ts          buildApp — mounts routes, request logging, error envelope
-  index.ts        boot: env → db (+auto-migrate when embedded) → serve
+  app.ts          buildApp — routes mounted at / and /api, logging, error envelope
+  index.ts        boot: paths → key (OS credential store) → db → serve, publishes api.url
+  web.ts          serves the built web client with an SPA history fallback
   http.ts         AppDeps/AppEnv types, parseBody, rate limiter
   auth.ts         sessions, requireAuth/requireWorkspace/requireRole, auth routes
   workspaces.ts   workspace CRUD + members
@@ -72,6 +77,14 @@ apps/api/src/
   *.test.ts       auth, agents, providers, isolation
 apps/worker/src/  jobs.ts (dispatch) + index.ts (queue wiring, schedules)
 apps/web/src/     api.ts (the only server contact), session.tsx, ui.tsx, routes/
+apps/desktop/src/
+  main.ts         Electron shell: window, tray, menus, notifications, deep links
+  supervisor.ts   starts/health-checks/restarts the API child (no Electron import)
+  approvals.ts    polls for pending approvals, announces each one once
+  settings.ts     per-device choices (background operation, notifications)
+packages/commands/src/
+  commands.ts     the catalogue — one definition per command, public API only
+  registry.ts     matching, argument parsing, per-surface availability
 packages/spec/src/
   manifest.ts     ManifestSchema, SPEC_VERSION, deployment target, parse/migrate
   permissions.ts  policy + evaluatePermission (first match wins)
@@ -86,6 +99,8 @@ packages/providers/src/
   pricing.ts         published prices; unknown models return undefined, never a guess
   registry.ts        createProvider() — the only place vendors are chosen
 packages/runtime/src/
+  automations.ts     projects manifest triggers into rows, then fires them
+  schedule.ts        next-fire arithmetic and loop endings (no database)
   compiler.ts        Manifest → RuntimePlan (model roles + tool grants resolved)
   loop.ts            frame-stack agent loop: tool dispatch, delegation, approval suspend/resume
   executor.ts        claim/heartbeat/reclaim, checkpointing, tracing, cost, conversations
@@ -170,11 +185,25 @@ catalogue resolved server-side, a widget registry with a derived layout,
 templates as data, and schema-constrained AI generation and editing with a
 preview before anything is applied.
 
-**Not implemented (Phase 7+):** desktop packaging, schedules/triggers, and
-deeper observability. Per-agent credential scoping and
-container-level sandbox isolation are deferred with reasons in `ROADMAP.md`
-Phase 4; the Phase 5 ceilings (in-process run bus, polled channel replies,
-Discord session resume) are listed in `ROADMAP.md` Phase 5.
+Working on top of Phase 6: the desktop app (`apps/desktop`) — an Electron
+shell (ADR-0015) supervising the API as a child of its own binary, OS
+application-data directories, the master encryption key in the platform
+credential store (ADR-0016), and the API serving the built web client so an
+install is one process. Mobile was moved out of Phase 7 to Phase 11; the
+reason is in `ROADMAP.md`.
+
+Working on top of Phase 7: automation — schedules (cron with real timezones,
+and intervals), event triggers, loops that end, and one shared command
+catalogue (`@bridge/commands`) that the CLI and the chat box's "/" palette
+both run.
+
+**Not implemented (Phase 9+):** deeper observability, a dead-letter surface,
+and mobile. Code signing, notarisation and the Windows/Linux artifacts are
+configured but not produced — they need credentials and per-OS runners, not
+code (`ROADMAP.md` Phase 7). Per-agent credential scoping and container-level
+sandbox isolation are deferred with reasons in `ROADMAP.md` Phase 4; the
+Phase 5 ceilings (in-process run bus, polled channel replies, Discord session
+resume) are listed in `ROADMAP.md` Phase 5.
 
 ## 8. Architectural invariants (violating these = redesign, don't)
 
@@ -219,41 +248,43 @@ Discord session resume) are listed in `ROADMAP.md` Phase 5.
 - Enforce `runtime.limits` (token/spend budgets) as soon as real runs exist.
   Runaway autonomous spend is a product-killing bug.
 
-## 10. Phase 7 instructions (your next phase)
+## 10. Phase 9 instructions (your next phase)
 
-Objective: the consumer install — `Bridge.dmg`, a Windows installer, a Linux
-package. Full criteria in `ROADMAP.md`.
+Objective: observability — run history you can search, traces you can read,
+costs you can attribute. Full criteria in `ROADMAP.md`.
 
-Most of the hard architectural work is already done and should not be
-redesigned:
+What Phase 8 leaves you, which shapes how Phase 9 should be built:
 
-- **Local mode already has no accounts** (ADR-0014) and binds loopback only.
-  The desktop app inherits this; do not add a login screen.
-- **The runtime is already in-process** with an embedded database, so the app
-  supervises one Node process, not a stack. `apps/cli/src/serve.ts` already
-  starts and health-checks it — that logic is the seed of the supervisor.
-- **No native dependencies anywhere** (ADR-0011), which is what makes
-  packaging for three OSes viable. Keep it that way; the crypto is Node
-  stdlib for exactly this reason.
+- **The event log now has a sequence** (`events.seq`), added because a
+  timestamp cannot be a cursor. Anything that reads the log incrementally —
+  a live feed, an export, a search index — should use it rather than
+  inventing a second ordering.
+- **Automations already report their own health** (status, reason, next run,
+  consecutive failures). The gap is a rollup: "is this agent well" across its
+  runs, automations and approvals. Build that from the same rows rather than
+  a parallel metrics store.
+- **Failed runs have no dedicated surface.** An automation disables itself
+  after repeated failures and says so, but there is no queue of poisoned work
+  to inspect and re-drive. That is the natural home for the dead-letter
+  behaviour deferred from Phase 8.
+- **`@bridge/commands` is where a new user-facing verb goes.** Adding a
+  command there gives it to the CLI and the chat palette at once; adding it
+  to only one of them is the thing this package exists to prevent.
+- **Cost is already captured per run** and aggregated by the dashboard data
+  sources (`packages/spec/src/sources.ts`). Prefer extending that closed
+  catalogue over adding ad-hoc endpoints — it is what keeps AI-authored
+  dashboards unable to read arbitrary data.
 
-What Phase 7 must actually change:
-- Move the data directory and CLI config out of repo-relative paths into the
-  OS application-data directory, and provider secrets into the platform
-  keychain behind the existing `SecretStore` interface.
-- Serve the built web assets from the API process so the desktop app is one
-  process, not a Vite dev server (`bridge dashboard` currently starts Vite).
-
-Definition of done for Phase 6 (met, keep it working): a user attaches a
-dashboard from a template or a description, it renders live workspace data,
-and "put my costs at the top" produces a previewed, validated change that is
-applied only on confirmation.
+Definition of done for Phase 8 (met, keep it working): an agent with a
+schedule in its manifest runs on time in its own timezone, a loop with an
+ending stops itself and says why, two runners never double-fire, and the same
+commands work from `bridge` and from "/" in the chat box.
 
 ## 11. Remaining roadmap
 
-**7 desktop app + local runtime
-packaging (the consumer installer, keychain secrets, background operation) +
-mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 Cloud
-→ 12 hardening. Details in `ROADMAP.md`.
+**9 observability (run history, traces, cost attribution, a dead-letter
+surface)** → 10 optimizer → 11 Cloud, which now also carries mobile → 12
+hardening. Details in `ROADMAP.md`.
 
 ## 12. Unresolved issues / deliberate deferrals
 
@@ -267,6 +298,11 @@ mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 
 - Channel replies poll the runs table rather than subscribing; outbound sends
   are split to the platform limit but not rate limited; the Discord adapter
   reconnects with a fresh IDENTIFY instead of resuming a session.
+- An automated run cannot trigger an event automation, which rules out
+  runaway cycles and also rules out chaining automations. Doing both needs a
+  provenance or depth model.
+- The automation runner polls every 5s and re-reads manifests every 60s, so a
+  newly added schedule starts within a minute rather than instantly.
 - Long-term memory and knowledge are spec-only; only conversation history is
   implemented. `memory.longTerm`/`knowledge` flags are carried but unused.
 - Sandboxing is process-level (path confinement, argument vectors, a minimal
@@ -288,7 +324,7 @@ mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 
   CLI ships if scoping or revocation needs differ.
 - `runtime.sandbox` levels are spec-only; enforcement is Phase 4.
 - No Dockerfiles for api/worker/web yet (compose covers infra only). Desktop
-  packaging is Phase 7.
+  packaging is done (`apps/desktop`); the server-image story is not.
 - The API test harness always uses embedded Postgres; the server driver is
   covered by `packages/db` tests in the server-mode CI job. If a query ever
   depends on server-only behaviour, add a server-mode API run.
@@ -297,8 +333,12 @@ mobile** → 8 automation/always-on → 9 observability → 10 optimizer → 11 
   Cloud runs multiple instances.
 - `@bridge/ui` holds tokens plus the primitives the web app needed; grow it
   as real screens demand, not preemptively.
-- Production SPA hosting needs a history fallback so client routes deep-link
-  correctly; the Vite dev server already handles it.
+- The desktop macOS build is signed with whatever local development identity
+  is present and is not notarised, so it warns on another machine. Windows
+  and Linux artifacts are configured but have never been built. Both need
+  credentials and per-OS CI runners.
+- The desktop update feed URL is a placeholder; `electron-updater` is wired
+  and treats an unreachable feed as "no update".
 
 ## 13. Warnings — do not redesign without a written ADR
 

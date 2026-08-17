@@ -2,27 +2,23 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApp } from "@bridge/api/app";
+import { parseCommand } from "@bridge/commands";
 import { createLogger, generateSecretKey, parseSecretKey } from "@bridge/core";
-import { createDb, type DbHandle } from "@bridge/db";
+import { createDb, type DbHandle, users } from "@bridge/db";
 import { RunExecutor } from "@bridge/runtime";
 import type { CompletionResult, DeltaHandler, Provider } from "@bridge/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type CliConfig } from "./client.js";
-import {
-  chat,
-  decideApproval,
-  listAgents,
-  listApprovals,
-  listRuns,
-  logs,
-  runAgent,
-  status,
-} from "./commands.js";
+import { chat, invite, logs, runAgent, tokens } from "./commands.js";
+import { renderResult } from "./render.js";
 
 /**
  * The CLI is exercised against a real Bridge API (embedded Postgres), through
  * the same HTTP surface the browser uses — which is the point of the test:
  * if the CLI needs something private, this cannot be written.
+ *
+ * Most commands run through `@bridge/commands`, so `bridge(...)` here drives
+ * exactly what the web chat box drives when someone types "/status".
  */
 const silentLogger = createLogger("test");
 silentLogger.level = "silent";
@@ -133,22 +129,78 @@ afterEach(async () => {
   await handle?.close();
 });
 
+/** Run a shared command the way both the CLI and the chat box do. */
+async function bridge(input: string): Promise<void> {
+  const { command, args } = parseCommand(input);
+  const client = ctx().client;
+  const result = await command.run(
+    {
+      workspaceId: config.workspaceId as string,
+      request: (path, init) =>
+        client.request(path, {
+          ...(init?.method ? { method: init.method } : {}),
+          ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+        }),
+    },
+    args,
+  );
+  renderResult(result, (line) => out.push(line));
+}
+
+/** Output with ANSI styling stripped, for asserting on text. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escapes
+const plain = () => out.join("\n").replace(/\u001b\[\d+m/g, "");
+
 describe("bridge status", () => {
   it("reports health, agents and pending approvals", async () => {
-    await status(ctx());
-    // Strip ANSI styling before asserting on the text.
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escapes
-    const text = out.join("\n").replace(/\u001b\[\d+m/g, "");
+    await bridge("status");
+    const text = plain();
     expect(text).toMatch(/^Bridge 0\.\d+\.\d+ — ok/m);
-    expect(text).toContain("db:up");
-    expect(text).toContain("1 agent(s), 1 deployed");
+    expect(text).toContain("1 agent, 1 deployed");
+  });
+
+  it("reports local-mode workspace status without a session token", async () => {
+    const [owner] = await handle.db.select({ id: users.id }).from(users);
+    if (!owner) throw new Error("test owner missing");
+    app = buildApp({
+      db: handle.db,
+      logger: silentLogger,
+      secretKey: parseSecretKey(generateSecretKey()),
+      secureCookies: false,
+      localUserId: owner.id,
+    });
+    config = { apiUrl: "http://api.test", workspaceId: config.workspaceId };
+
+    await bridge("status");
+    expect(plain()).toContain("1 agent, 1 deployed");
+  });
+});
+
+describe("bridge access", () => {
+  it("creates, lists and revokes a distinct API token", async () => {
+    await tokens(ctx(), "create", "Deployment CLI");
+    expect(plain()).toContain("will not be shown again");
+    out = [];
+    await tokens(ctx(), "list");
+    expect(plain()).toContain("Deployment CLI");
+
+    const { tokens: rows } = await ctx().client.get<{ tokens: { id: string }[] }>(
+      "/v1/auth/tokens",
+    );
+    await tokens(ctx(), "revoke", rows[0]?.id);
+    expect(plain()).toContain("revoked");
+  });
+
+  it("creates a workspace invitation share link", async () => {
+    await invite(ctx(), "new-teammate@example.com", "member");
+    expect(plain()).toContain("/?invite=");
   });
 });
 
 describe("bridge agent", () => {
   it("lists agents by slug", async () => {
-    await listAgents(ctx());
-    expect(out.join("\n")).toContain("helper");
+    await bridge("agents");
+    expect(plain()).toContain("helper");
   });
 
   it("runs an agent and follows the stream to completion", async () => {
@@ -225,8 +277,8 @@ describe("bridge runs and logs", () => {
     );
     await executor().runOnce();
 
-    await listRuns(ctx(), agentSlug);
-    expect(out.join("\n")).toContain("succeeded");
+    await bridge(`runs ${agentSlug}`);
+    expect(plain()).toContain("succeeded");
 
     out = [];
     await logs(ctx(), run.id);
@@ -287,27 +339,24 @@ describe("bridge approvals", () => {
       dataDir,
     }).runOnce();
 
-    await listApprovals(ctx());
-    const listed = out.join("\n");
+    await bridge("approvals");
+    const listed = plain();
     expect(listed).toContain("filesystem");
-    expect(listed).toContain("a.txt");
 
     const approvalId = listed.match(/apr_[0-9a-f]+/)?.[0];
     if (!approvalId) throw new Error("no approval id in output");
 
     out = [];
-    await decideApproval(ctx(), approvalId, true);
-    expect(out.join("\n")).toContain("Approved");
+    await bridge(`approve ${approvalId}`);
+    expect(plain()).toContain("Approved");
 
     // Nothing left waiting once decided.
     out = [];
-    await listApprovals(ctx());
-    expect(out.join("\n")).toContain("Nothing waiting");
+    await bridge("approvals");
+    expect(plain()).toContain("Nothing is waiting on you");
   });
 
   it("sends a denial reason through to the API", async () => {
-    await expect(decideApproval(ctx(), "apr_missing", false, "no")).rejects.toThrow(
-      /no pending approval/,
-    );
+    await expect(bridge("deny apr_missing not this time")).rejects.toThrow(/no pending approval/);
   });
 });

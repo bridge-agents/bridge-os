@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolContext } from "@bridge/sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { filesystemTool, httpTool, shellTool, webSearchTool } from "./native.js";
+import { filesystemTool, httpTool, imageTool, shellTool, webSearchTool } from "./native.js";
 import { assertGrantsSupported, ToolRegistry } from "./registry.js";
 import { assertNetworkAllowed, resolveWithin, type SandboxPolicy } from "./sandbox.js";
 
@@ -63,7 +63,7 @@ describe("filesystem sandbox", () => {
       ctx,
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/escapes/);
+    expect(result.error).toMatch(/outside this agent's workspace/);
   });
 
   it("refuses an absolute path outside the workspace", async () => {
@@ -72,7 +72,7 @@ describe("filesystem sandbox", () => {
       ctx,
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/escapes/);
+    expect(result.error).toMatch(/outside this agent's workspace/);
   });
 
   it("refuses a symlink that points outside the workspace", async () => {
@@ -91,7 +91,7 @@ describe("filesystem sandbox", () => {
     );
     // Resolved before the check, so the link cannot be used as a way out.
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/escapes/);
+    expect(result.error).toMatch(/outside this agent's workspace/);
   });
 
   it("refuses everything when the agent has no filesystem access", async () => {
@@ -110,7 +110,11 @@ describe("filesystem sandbox", () => {
     // Only the destructive ones are flagged dangerous.
     expect(tool.actions.filter((action) => action.dangerous).map((a) => a.name)).toEqual([
       "write",
+      "edit",
+      "move",
       "delete",
+      // Any path that might leave the workspace, whatever the verb.
+      "reach-outside-workspace",
     ]);
   });
 });
@@ -236,6 +240,72 @@ describe("web search tool", () => {
   });
 });
 
+describe("image tool", () => {
+  const png = Buffer.from("not really a png").toString("base64");
+
+  it("says it needs a provider instead of failing silently", async () => {
+    const result = await imageTool().execute({ prompt: "a bridge at dusk" }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/connect one in Providers/);
+  });
+
+  it("returns the picture as an artifact, which is what puts it in the chat", async () => {
+    let sent: unknown;
+    const tool = imageTool({
+      endpoint: "https://api.openai.example/v1",
+      apiKey: "k",
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        sent = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ data: [{ b64_json: png }] }), {
+          headers: { "content-type": "application/json" },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    const result = await tool.execute({ prompt: "a bridge at dusk", size: "1024x1024" }, ctx);
+    expect(result.ok).toBe(true);
+    expect(sent).toMatchObject({ prompt: "a bridge at dusk", size: "1024x1024", n: 1 });
+    expect(result.artifacts).toEqual([
+      { name: "image-1.png", mimeType: "image/png", dataBase64: png },
+    ]);
+  });
+
+  it("fetches the bytes when the provider hands back a URL", async () => {
+    const tool = imageTool({
+      endpoint: "https://api.openai.example/v1",
+      apiKey: "k",
+      fetchImpl: (async (url: string | URL) =>
+        String(url).includes("/images/generations")
+          ? new Response(JSON.stringify({ data: [{ url: "https://cdn.example/a.png" }] }), {
+              headers: { "content-type": "application/json" },
+            })
+          : new Response(Buffer.from(png, "base64"), {
+              headers: { "content-type": "image/png" },
+            })) as unknown as typeof fetch,
+    });
+
+    const result = await tool.execute({ prompt: "a bridge" }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.artifacts?.[0]).toMatchObject({ name: "image-1.png", dataBase64: png });
+  });
+
+  it("reports why the provider refused", async () => {
+    const tool = imageTool({
+      endpoint: "https://api.openai.example/v1",
+      apiKey: "k",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ error: { message: "billing hard limit reached" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })) as unknown as typeof fetch,
+    });
+
+    const result = await tool.execute({ prompt: "a bridge" }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/billing hard limit reached/);
+  });
+});
+
 describe("registry", () => {
   it("resolves grants, including MCP prefixes", () => {
     const mcpStyle = httpTool(policy());
@@ -279,6 +349,8 @@ describe("resolveWithin", () => {
   });
 
   it("rejects traversal even when it dips inside first", async () => {
-    await expect(resolveWithin(root, "nested/../../secret.txt")).rejects.toThrow(/escapes/);
+    await expect(resolveWithin(root, "nested/../../secret.txt")).rejects.toThrow(
+      /outside this agent's workspace/,
+    );
   });
 });

@@ -16,6 +16,7 @@
     "@bridge/providers": "workspace:*",
     "@bridge/sdk": "workspace:*",
     "@bridge/spec": "workspace:*",
+    "cron-parser": "^5.10.0",
     "drizzle-orm": "^0.44.0",
     "zod": "^4.0.0"
   },

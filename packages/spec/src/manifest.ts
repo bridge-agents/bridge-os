@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ModelRefSchema, SlugSchema } from "./common.js";
 import { DashboardSchema } from "./dashboard.js";
+import { isDuration } from "./duration.js";
 import { PermissionPolicySchema } from "./permissions.js";
 
 /**
@@ -20,6 +21,8 @@ export const AgentDefSchema = z.object({
   tools: z.array(z.string()).default([]),
   /** Agent names this agent may spawn/delegate to as subagents. */
   canDelegateTo: z.array(z.string()).default([]),
+  /** Workspace secret names this agent is explicitly allowed to resolve. */
+  secrets: z.array(z.string()).default([]),
   memory: z
     .object({
       working: z.boolean().default(true),
@@ -33,25 +36,111 @@ export const ToolGrantSchema = z.object({
   name: SlugSchema,
   kind: z.enum(["native", "mcp", "http", "custom"]),
   config: z.record(z.string(), z.unknown()).prefault({}),
+  /** Config path to workspace secret name, e.g. `headers.authorization`. */
+  secretBindings: z.record(z.string(), z.string()).optional(),
 });
 export type ToolGrant = z.infer<typeof ToolGrantSchema>;
 
-export const ScheduleTriggerSchema = z.object({
-  name: SlugSchema,
-  cron: z.string().min(1),
-  timezone: z.string().default("UTC"),
-  /** Agent to run; omitted → entry agent. */
-  agent: z.string().optional(),
-  /** Natural-language task input for the scheduled run. */
-  input: z.string().optional(),
+/** How hard a model should think, where the model supports being told. */
+export const ReasoningEffortSchema = z.enum([
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
+/**
+ * Bounds that turn a repeating trigger into a loop that ends.
+ *
+ * An automation nobody stops is the failure mode of this whole feature: it
+ * runs while you sleep, spends money, and the first you hear of it is the
+ * bill. So every repeating trigger can carry its own ending, and the runner
+ * enforces these rather than trusting the agent to stop itself.
+ */
+export const LoopBoundsSchema = z.object({
+  /** Stop after this many runs. "Check the deploy 10 times, then give up." */
+  maxRuns: z.number().int().positive().max(100_000).optional(),
+  /** Stop at this instant, whatever the count. ISO 8601. */
+  until: z.string().datetime({ offset: true }).optional(),
+  /**
+   * Stop after this many consecutive failures. A schedule failing every
+   * minute forever is noise, not resilience.
+   */
+  maxConsecutiveFailures: z.number().int().positive().max(1000).default(5),
 });
+
+export const ScheduleTriggerSchema = z
+  .object({
+    name: SlugSchema,
+    /** Human-readable label; `name` remains the stable machine identifier. */
+    title: z.string().trim().min(1).max(120).optional(),
+    /** Calendar schedules: "0 9 * * 1-5". Mutually exclusive with `every`. */
+    cron: z.string().min(1).optional(),
+    /** Interval loops: "5m", "2h", "1d". Mutually exclusive with `cron`. */
+    every: z.string().min(1).optional(),
+    /**
+     * IANA zone for a cron time. Left out, the workspace's zone applies —
+     * which is what makes "9am" mean 9am where the user is without every
+     * manifest having to say so.
+     */
+    timezone: z.string().optional(),
+    /** Agent to run; omitted → entry agent. */
+    agent: z.string().optional(),
+    /** Natural-language task input for the scheduled run. */
+    input: z.string().optional(),
+    /**
+     * Model for this automation's runs. Left out, the workspace default
+     * applies, then the agent's own — which is how a schedule ends up on a
+     * model nobody chose.
+     */
+    model: ModelRefSchema.optional(),
+    reasoningEffort: ReasoningEffortSchema.optional(),
+    /** Off without deleting it — the ordinary way to stop an automation. */
+    enabled: z.boolean().default(true),
+    loop: LoopBoundsSchema.prefault({}),
+  })
+  .superRefine((trigger, ctx) => {
+    // One or the other, never both: a trigger with two notions of "when" has
+    // no answer to "when does this next run?".
+    if (!trigger.cron === !trigger.every) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'a schedule needs exactly one of "cron" or "every"',
+        path: ["cron"],
+      });
+    }
+    if (trigger.every && !isDuration(trigger.every)) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'use a duration like "30s", "5m", "2h" or "1d"',
+        path: ["every"],
+      });
+    }
+  });
+
+export type ScheduleTrigger = z.infer<typeof ScheduleTriggerSchema>;
+export type LoopBounds = z.infer<typeof LoopBoundsSchema>;
 
 export const EventTriggerSchema = z.object({
   name: SlugSchema,
+  /** Human-readable label; `name` remains the stable machine identifier. */
+  title: z.string().trim().min(1).max(120).optional(),
   /** Event type this trigger subscribes to (see events.ts catalog). */
   event: z.string().min(1),
   agent: z.string().optional(),
+  /** Task for the run this event starts; the event is appended as context. */
+  input: z.string().optional(),
+  model: ModelRefSchema.optional(),
+  reasoningEffort: ReasoningEffortSchema.optional(),
+  enabled: z.boolean().default(true),
+  loop: LoopBoundsSchema.prefault({}),
 });
+
+export type EventTrigger = z.infer<typeof EventTriggerSchema>;
 
 export const ChannelBindingSchema = z.object({
   /** Channel adapter type, e.g. "telegram", "discord". */
@@ -89,6 +178,13 @@ export const RuntimeConfigSchema = z.object({
     .object({
       network: z.enum(["none", "restricted", "full"]).default("restricted"),
       filesystem: z.enum(["none", "workspace", "full"]).default("workspace"),
+      /**
+       * Directories outside the agent's own workspace it may work in — a
+       * notes folder, a project. This is how an agent reaches your real
+       * files without being handed the machine, and naming them is the
+       * point: a list you wrote is auditable in a way "full" is not.
+       */
+      allowedPaths: z.array(z.string().min(1)).max(32).default([]),
     })
     .prefault({}),
 });
@@ -162,6 +258,16 @@ export const ManifestSchema = z
             message: `agent "${agent.name}" references unknown tool "${tool}"`,
             path: ["agents", i, "tools"],
           });
+        }
+        const grant = manifest.tools.find((candidate) => candidate.name === tool);
+        for (const secretName of Object.values(grant?.secretBindings ?? {})) {
+          if (!agent.secrets.includes(secretName)) {
+            ctx.addIssue({
+              code: "custom",
+              message: `agent "${agent.name}" must explicitly allow secret "${secretName}"`,
+              path: ["agents", i, "secrets"],
+            });
+          }
         }
       }
       for (const delegate of agent.canDelegateTo) {

@@ -26,6 +26,17 @@ export interface ToolResult {
   ok: boolean;
   output: unknown;
   error?: string;
+  /** Binary or filesystem output that Bridge should persist with the assistant turn. */
+  artifacts?: ToolArtifact[];
+}
+
+export interface ToolArtifact {
+  name: string;
+  mimeType?: string;
+  /** Base64 bytes returned directly by a remote tool such as MCP image generation. */
+  dataBase64?: string;
+  /** Absolute, sandbox-validated path produced by a local tool. */
+  sourcePath?: string;
 }
 
 export interface BridgeTool<Input = unknown> {

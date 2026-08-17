@@ -1,7 +1,8 @@
 import { createLogger } from "@bridge/core";
-import { runs } from "@bridge/db";
+import { agents, runs } from "@bridge/db";
 import { RunExecutor } from "@bridge/runtime";
-import type { Provider } from "@bridge/sdk";
+import type { CompletionRequest, Provider } from "@bridge/sdk";
+import type { Manifest } from "@bridge/spec";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { as, createTestApp, signUp, type TestApp, type TestUser } from "./testing.js";
@@ -125,12 +126,219 @@ describe("runs", () => {
     ).toHaveLength(1);
   });
 
+  it("renames, pins, sorts, and deletes conversations", async () => {
+    const first = (await (
+      await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+        method: "POST",
+        body: JSON.stringify({ input: "first thread" }),
+      })
+    ).json()) as { run: { conversationId: string } };
+    await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ input: "newer thread" }),
+    });
+
+    const updated = await api(`/v1/workspaces/${ws}/conversations/${first.run.conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title: "Important work", pinned: true }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      conversation: { title: "Important work", pinned: true },
+    });
+
+    const list = (await (await api(`/v1/workspaces/${ws}/conversations`)).json()) as {
+      conversations: { id: string; pinned: boolean }[];
+    };
+    expect(list.conversations[0]).toMatchObject({
+      id: first.run.conversationId,
+      pinned: true,
+    });
+
+    expect(
+      (
+        await api(`/v1/workspaces/${ws}/conversations/${first.run.conversationId}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(204);
+    expect(
+      (await api(`/v1/workspaces/${ws}/conversations/${first.run.conversationId}`)).status,
+    ).toBe(404);
+  });
+
   it("rejects a conversation from another agent's workspace", async () => {
     const res = await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
       method: "POST",
       body: JSON.stringify({ input: "hi", conversationId: "cnv_nope" }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it("rejects a conversation owned by another agent in the same workspace", async () => {
+    const first = (await (
+      await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+        method: "POST",
+        body: JSON.stringify({ input: "one" }),
+      })
+    ).json()) as { run: { conversationId: string } };
+    const created = await api(`/v1/workspaces/${ws}/agents`, {
+      method: "POST",
+      body: JSON.stringify({ templateId: "personal-assistant", name: "Other assistant" }),
+    });
+    const otherAgentId = ((await created.json()) as { agent: { id: string } }).agent.id;
+
+    const res = await api(`/v1/workspaces/${ws}/agents/${otherAgentId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ input: "two", conversationId: first.run.conversationId }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("uploads a file, binds it to the run, and delivers model options and bytes", async () => {
+    await connectAnthropic();
+    const form = new FormData();
+    form.append("file", new File(["load rating: 42"], "notes.txt", { type: "text/plain" }));
+    const uploaded = await api(`/v1/workspaces/${ws}/attachments`, {
+      method: "POST",
+      body: form,
+    });
+    expect(uploaded.status).toBe(201);
+    const attachment = (await uploaded.json()) as {
+      attachment: { id: string; name: string; sizeBytes: number };
+    };
+
+    const started = await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({
+        input: "use the attached notes",
+        attachmentIds: [attachment.attachment.id],
+        model: { provider: "anthropic", model: "claude-opus-test" },
+        reasoningEffort: "high",
+        fastMode: true,
+      }),
+    });
+    if (started.status !== 201)
+      throw new Error(`start failed: ${started.status} ${await started.text()}`);
+    const run = (await started.json()) as { run: { id: string; conversationId: string } };
+
+    let request: CompletionRequest | undefined;
+    const capturing: Provider = {
+      id: "anthropic",
+      async complete(value) {
+        request = value;
+        return {
+          message: { role: "assistant", content: "read it" },
+          usage: { inputTokens: 1, outputTokens: 1 },
+          stopReason: "end",
+          model: value.model,
+        };
+      },
+    };
+    await new RunExecutor({
+      db: ctx.handle.db,
+      logger: silentLogger,
+      getProvider: async () => capturing,
+    }).runOnce();
+
+    expect(request?.model).toBe("claude-opus-test");
+    expect(request?.reasoningEffort).toBe("high");
+    expect(request?.serviceTier).toBe("fast");
+    expect(request?.messages.at(-1)?.attachments?.[0]).toMatchObject({
+      id: attachment.attachment.id,
+      name: "notes.txt",
+      mimeType: "text/plain",
+    });
+    expect(
+      Buffer.from(request?.messages.at(-1)?.attachments?.[0]?.dataBase64 ?? "", "base64").toString(
+        "utf8",
+      ),
+    ).toBe("load rating: 42");
+
+    const conversation = (await (
+      await api(`/v1/workspaces/${ws}/conversations/${run.run.conversationId}`)
+    ).json()) as { messages: { role: string; attachments: { id: string }[] }[] };
+    expect(conversation.messages[0]?.attachments).toEqual([
+      expect.objectContaining({ id: attachment.attachment.id }),
+    ]);
+    // The user's file belongs to the question alone; the reply made nothing.
+    expect(conversation.messages[1]).toMatchObject({ role: "assistant", attachments: [] });
+  });
+
+  it("shows a file the agent wrote in the conversation, and serves its bytes", async () => {
+    await connectAnthropic();
+    const [agent] = await ctx.handle.db.select().from(agents).where(eq(agents.id, agentId));
+    const manifest = structuredClone(agent?.manifest) as Manifest;
+    const entry = manifest.agents.find((one) => one.name === manifest.entryAgent);
+    if (!entry) throw new Error("entry agent missing");
+    entry.tools = ["filesystem"];
+    entry.canDelegateTo = [];
+    manifest.agents = [entry];
+    manifest.tools = [{ name: "filesystem", kind: "native", config: {} }];
+    manifest.permissions = {
+      default: "deny",
+      rules: [{ resource: "tool:filesystem", actions: ["write"], effect: "allow" }],
+    };
+    await ctx.handle.db.update(agents).set({ manifest }).where(eq(agents.id, agentId));
+
+    const started = await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ input: "write me a summary" }),
+    });
+    const run = (await started.json()) as { run: { id: string; conversationId: string } };
+
+    let call = 0;
+    const writing: Provider = {
+      id: "anthropic",
+      async complete() {
+        call += 1;
+        return {
+          message:
+            call === 1
+              ? {
+                  role: "assistant",
+                  content: "",
+                  toolCalls: [
+                    {
+                      id: "write-summary",
+                      name: "filesystem",
+                      arguments: {
+                        operation: "write",
+                        path: "summary.md",
+                        content: "# Summary\n",
+                      },
+                    },
+                  ],
+                }
+              : { role: "assistant", content: "Here is the summary." },
+          usage: { inputTokens: 1, outputTokens: 1 },
+          stopReason: call === 1 ? "tool_use" : "end",
+          model: "claude-sonnet-5",
+        };
+      },
+    };
+    await new RunExecutor({
+      db: ctx.handle.db,
+      logger: silentLogger,
+      getProvider: async () => writing,
+      dataDir: ctx.dataDir,
+      attachmentDataDir: ctx.dataDir,
+    }).runOnce();
+
+    const conversation = (await (
+      await api(`/v1/workspaces/${ws}/conversations/${run.run.conversationId}`)
+    ).json()) as {
+      messages: { role: string; attachments: { id: string; name: string; mimeType: string }[] }[];
+    };
+    const reply = conversation.messages.find((message) => message.role === "assistant");
+    expect(reply?.attachments).toEqual([
+      expect.objectContaining({ name: "summary.md", mimeType: "text/markdown" }),
+    ]);
+
+    // What the chat links to has to actually be downloadable.
+    const file = await api(`/v1/workspaces/${ws}/attachments/${reply?.attachments[0]?.id}`);
+    expect(file.status).toBe(200);
+    expect(await file.text()).toBe("# Summary\n");
   });
 
   it("returns a run with its trace", async () => {
@@ -166,6 +374,77 @@ describe("runs", () => {
 
   it("404s an unknown run", async () => {
     expect((await api(`/v1/workspaces/${ws}/runs/run_missing`)).status).toBe(404);
+  });
+});
+
+/**
+ * Opening a conversation has to show what happened in it.
+ *
+ * The bug these close: a run that failed, or one still queued, wrote nothing
+ * to the conversation — so opening it showed the same blank slate as a brand
+ * new chat, and a scheduled run that crashed looked like it had never
+ * happened at all.
+ */
+describe("what a conversation shows", () => {
+  const open = async (conversationId: string) =>
+    (await (await api(`/v1/workspaces/${ws}/conversations/${conversationId}`)).json()) as {
+      runs: { id: string; status: string; error: string | null; trigger: string }[];
+      messages: { role: string; content: string; runId: string | null }[];
+    };
+
+  const start = async (input: string) =>
+    (
+      (await (
+        await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+          method: "POST",
+          body: JSON.stringify({ input }),
+        })
+      ).json()) as { run: { id: string; conversationId: string } }
+    ).run;
+
+  it("holds the question before the answer exists", async () => {
+    const run = await start("what happened overnight?");
+
+    const { messages } = await open(run.conversationId);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.role).toBe("user");
+    expect(messages[0]?.content).toBe("what happened overnight?");
+  });
+
+  it("reports a run that failed, rather than looking empty", async () => {
+    const run = await start("do the thing");
+    await ctx.handle.db
+      .update(runs)
+      .set({ status: "failed", error: "provider unreachable" })
+      .where(eq(runs.id, run.id));
+
+    const conversation = await open(run.conversationId);
+    // The question is there, and so is the reason there is no answer.
+    expect(conversation.messages).toHaveLength(1);
+    expect(conversation.runs).toHaveLength(1);
+    expect(conversation.runs[0]).toMatchObject({
+      status: "failed",
+      error: "provider unreachable",
+    });
+  });
+
+  it("says how a run was started, so automated work is recognisable", async () => {
+    const run = await start("scheduled work");
+    await ctx.handle.db.update(runs).set({ trigger: "schedule" }).where(eq(runs.id, run.id));
+
+    expect((await open(run.conversationId)).runs[0]?.trigger).toBe("schedule");
+  });
+
+  it("keeps runs in the order they were queued", async () => {
+    const first = await start("one");
+    await api(`/v1/workspaces/${ws}/agents/${agentId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ input: "two", conversationId: first.conversationId }),
+    });
+
+    const conversation = await open(first.conversationId);
+    expect(conversation.runs).toHaveLength(2);
+    expect(conversation.messages.map((message) => message.content)).toEqual(["one", "two"]);
   });
 });
 

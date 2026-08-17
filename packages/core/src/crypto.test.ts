@@ -13,22 +13,39 @@ import {
 
 const key = parseSecretKey(generateSecretKey());
 
-describe("passwords", () => {
-  it("verifies the correct password and rejects wrong ones", () => {
-    const stored = hashPassword("correct horse battery staple");
-    expect(verifyPassword("correct horse battery staple", stored)).toBe(true);
-    expect(verifyPassword("Correct horse battery staple", stored)).toBe(false);
-    expect(verifyPassword("", stored)).toBe(false);
-  });
+/**
+ * Password hashing is deliberately expensive — OWASP scrypt parameters — so
+ * these get a timeout matched to the work rather than vitest's 5s default.
+ * Three or four hashes on a loaded machine (the whole workspace's tests run
+ * in parallel) genuinely exceed it, and a timeout here reads as a crypto
+ * failure when it is really CPU contention.
+ */
+const SCRYPT_TIMEOUT = 30_000;
 
-  it("never stores the password itself and salts each hash", () => {
-    const password = "hunter2-hunter2";
-    const a = hashPassword(password);
-    const b = hashPassword(password);
-    expect(a).not.toContain(password);
-    expect(a).not.toBe(b);
-    expect(verifyPassword(password, b)).toBe(true);
-  });
+describe("passwords", () => {
+  it(
+    "verifies the correct password and rejects wrong ones",
+    () => {
+      const stored = hashPassword("correct horse battery staple");
+      expect(verifyPassword("correct horse battery staple", stored)).toBe(true);
+      expect(verifyPassword("Correct horse battery staple", stored)).toBe(false);
+      expect(verifyPassword("", stored)).toBe(false);
+    },
+    SCRYPT_TIMEOUT,
+  );
+
+  it(
+    "never stores the password itself and salts each hash",
+    () => {
+      const password = "hunter2-hunter2";
+      const a = hashPassword(password);
+      const b = hashPassword(password);
+      expect(a).not.toContain(password);
+      expect(a).not.toBe(b);
+      expect(verifyPassword(password, b)).toBe(true);
+    },
+    SCRYPT_TIMEOUT,
+  );
 
   it("rejects malformed stored hashes instead of throwing", () => {
     expect(verifyPassword("x", "")).toBe(false);

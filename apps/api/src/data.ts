@@ -46,12 +46,12 @@ async function dailySeries(
 
   const rows = await deps.db
     .select({
-      day: sql<string>`to_char(${runs.queuedAt}, 'YYYY-MM-DD')`,
+      day: sql<string>`to_char(${runs.queuedAt} at time zone 'UTC', 'YYYY-MM-DD')`,
       value: expression,
     })
     .from(runs)
     .where(and(eq(runs.workspaceId, workspaceId), gte(runs.queuedAt, since)))
-    .groupBy(sql`to_char(${runs.queuedAt}, 'YYYY-MM-DD')`);
+    .groupBy(sql`to_char(${runs.queuedAt} at time zone 'UTC', 'YYYY-MM-DD')`);
 
   const byDay = new Map(rows.map((row) => [row.day, Number(row.value ?? 0)]));
   return emptyDays().map((day) => ({ label: day.label, value: byDay.get(day.label) ?? 0 }));

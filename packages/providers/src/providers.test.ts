@@ -1,6 +1,6 @@
 import { MockProvider } from "@bridge/sdk";
 import { describe, expect, it } from "vitest";
-import { OpenAiCompatibleProvider } from "./openai-compatible.js";
+import { OpenAiCompatibleProvider, retryDelay } from "./openai-compatible.js";
 import { estimateCost, getModelPrice } from "./pricing.js";
 import { createProvider, UnsupportedProviderError } from "./registry.js";
 
@@ -12,6 +12,8 @@ interface WireBody {
   tools?: { function: { name: string } }[];
   stream?: boolean;
   stream_options?: { include_usage?: boolean };
+  reasoning_effort?: string;
+  service_tier?: string;
 }
 
 /** Minimal fake of an OpenAI-compatible endpoint. */
@@ -143,6 +145,40 @@ describe("OpenAiCompatibleProvider", () => {
     expect(body.messages[3]).toEqual({ role: "tool", tool_call_id: "c1", content: "result" });
   });
 
+  it("sends attachments, reasoning effort, and fast service tier", async () => {
+    await provider(textReply).complete({
+      model: "gpt-5.6-sol",
+      messages: [
+        {
+          role: "user",
+          content: "inspect these",
+          attachments: [
+            {
+              id: "att_image",
+              name: "span.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+              dataBase64: "YWJj",
+            },
+            {
+              id: "att_pdf",
+              name: "spec.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 3,
+              dataBase64: "ZGVm",
+            },
+          ],
+        },
+      ],
+      reasoningEffort: "high",
+      serviceTier: "fast",
+    });
+
+    expect(sent.body).toMatchObject({ reasoning_effort: "high", service_tier: "fast" });
+    const content = sent.body?.messages[0]?.content as Record<string, unknown>[];
+    expect(content.map((part) => part.type)).toEqual(["text", "image_url", "file"]);
+  });
+
   it("omits the authorization header when no key is configured (local runtimes)", async () => {
     const local = new OpenAiCompatibleProvider({
       id: "ollama",
@@ -160,6 +196,11 @@ describe("createProvider", () => {
     expect(createProvider({ provider: "anthropic", apiKey: "sk-ant" }).id).toBe("anthropic");
     expect(createProvider({ provider: "openai", apiKey: "sk" }).id).toBe("openai");
     expect(createProvider({ provider: "ollama" }).id).toBe("ollama");
+    expect(createProvider({ provider: "codex" }).id).toBe("codex");
+    expect(createProvider({ provider: "claude-code" }).id).toBe("claude-code");
+    expect(createProvider({ provider: "github-copilot" }).id).toBe("github-copilot");
+    expect(createProvider({ provider: "google-gemini", apiKey: "key" }).id).toBe("google-gemini");
+    expect(createProvider({ provider: "deepseek", apiKey: "key" }).id).toBe("deepseek");
     expect(createProvider({ provider: "openai-compatible", baseUrl: "http://x/v1" }).id).toBe(
       "openai-compatible",
     );
@@ -171,7 +212,7 @@ describe("createProvider", () => {
   });
 
   it("rejects providers with no adapter and no base URL", () => {
-    expect(() => createProvider({ provider: "google", apiKey: "k" })).toThrow(
+    expect(() => createProvider({ provider: "unknown-cloud", apiKey: "k" })).toThrow(
       UnsupportedProviderError,
     );
   });
@@ -342,5 +383,81 @@ describe("streamComplete fallback", () => {
     expect(result.usage).toEqual({ inputTokens: 30, outputTokens: 4 });
     // The whole answer arrives as one delta rather than nothing at all.
     expect(deltas).toEqual(["plain body"]);
+  });
+});
+
+describe("riding out a rate limit", () => {
+  it("waits the time the server asks for, then succeeds", async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const provider = new OpenAiCompatibleProvider({
+      id: "openai",
+      baseUrl: "https://api.example/v1",
+      apiKey: "k",
+      fetchImpl: (async () => {
+        calls += 1;
+        if (calls === 1) {
+          waits.push(Date.now());
+          return new Response("slow down", { status: 429, headers: { "retry-after": "0" } });
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "eventually" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }) as unknown as typeof fetch,
+    });
+
+    const result = await provider.complete({ model: "gpt-test", messages: [] });
+    expect(calls).toBe(2);
+    expect(result.message.content).toBe("eventually");
+  });
+
+  it("gives up rather than retrying forever", async () => {
+    let calls = 0;
+    const provider = new OpenAiCompatibleProvider({
+      id: "openai",
+      baseUrl: "https://api.example/v1",
+      apiKey: "k",
+      fetchImpl: (async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+          status: 429,
+          headers: { "retry-after": "0", "content-type": "application/json" },
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    await expect(provider.complete({ model: "gpt-test", messages: [] })).rejects.toThrow(/429/);
+    // The first try plus its retries, and no more.
+    expect(calls).toBe(5);
+  });
+
+  it("does not retry a refused connection — nothing is listening", async () => {
+    let calls = 0;
+    const provider = new OpenAiCompatibleProvider({
+      id: "ollama",
+      baseUrl: "http://localhost:11434/v1",
+      fetchImpl: (async () => {
+        calls += 1;
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+
+    await expect(provider.complete({ model: "llama", messages: [] })).rejects.toThrow(
+      /local model server/,
+    );
+    expect(calls).toBe(1);
+  });
+
+  it("reads retry-after as seconds or as a date, and caps the wait", () => {
+    expect(retryDelay("2", 0)).toBe(2000);
+    expect(retryDelay(new Date(Date.now() + 3000).toUTCString(), 0)).toBeGreaterThan(1500);
+    expect(retryDelay("99999", 0)).toBe(60_000);
+    // Without a header it backs off, and never sits still.
+    expect(retryDelay(null, 0)).toBeGreaterThanOrEqual(500);
+    expect(retryDelay(null, 3)).toBeGreaterThanOrEqual(4000);
   });
 });

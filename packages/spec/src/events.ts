@@ -30,6 +30,9 @@ export const EVENT_TYPES = [
   "deployment.ready",
   "deployment.failed",
   "provider.error",
+  /** An automation started a run, or reached its end. */
+  "automation.fired",
+  "automation.ended",
 ] as const;
 
 export const EventTypeSchema = z.enum(EVENT_TYPES);

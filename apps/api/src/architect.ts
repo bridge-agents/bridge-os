@@ -62,8 +62,25 @@ The manifest shape:
     "default": "allow" | "deny" | "ask",
     "rules": [{ "resource": "tool:<name>", "actions": "*" | [string], "effect": "allow" | "deny" | "ask" }]
   },
-  "triggers": { "schedules": [{ "name": string, "cron": string, "timezone": string, "input": string }], "events": [] },
-  "deployment": { "target": "local" | "self-hosted" | "cloud", "background": boolean }
+  "triggers": {
+    "schedules": [{
+      "name": lowercase-hyphenated,
+      "cron": "<5-field cron>",        // calendar times — use EITHER cron
+      "every": "30s" | "5m" | "2h" | "1d",  // OR every, never both
+      "timezone": "<IANA zone, e.g. America/New_York>",
+      "input": "<the task to run, in plain language>",
+      "loop": { "maxRuns": number, "until": "<ISO 8601>", "maxConsecutiveFailures": number }
+    }],
+    "events": [{ "name": lowercase-hyphenated, "event": "<event type>", "input": string }]
+  },
+  "deployment": { "target": "local" | "self-hosted" | "cloud", "background": boolean },
+  "runtime": {
+    "sandbox": {
+      "network": "none" | "restricted" | "full",
+      "filesystem": "none" | "workspace" | "full",
+      "allowedPaths": ["<absolute path or ~/folder the agent may work in>"]
+    }
+  }
 }
 
 Rules you must follow:
@@ -73,7 +90,21 @@ Rules you must follow:
 - "entryAgent" must name one of the agents.
 - Only use providers the user has connected.
 - Default permissions to "ask" and grant only what the described job needs. Anything that sends, deletes, spends, or publishes stays "ask".
-- Prefer the smallest design that does the job: one agent unless the work genuinely splits into distinct roles.`;
+- Prefer the smallest design that does the job: one agent unless the work genuinely splits into distinct roles.
+- The "filesystem" tool can read, list, glob, grep, write, edit, mkdir, move and
+  delete. Grant it whenever the job involves files. Prefer "edit" (replace an
+  exact fragment) over "write" (replace the whole file) when changing something
+  that already exists.
+- An agent that works on the user's own files needs those folders in
+  "runtime.sandbox.allowedPaths" — name the folders rather than setting
+  filesystem to "full", which hands over the whole machine.
+- Schedules take exactly one of "cron" or "every". Use "every" for "check in on
+  something" ("every 15m"); use "cron" for a time of day or day of week ("0 9 * * 1-5"),
+  and set "timezone" to the user's, because "9am" means 9am where they are.
+- A repeating task that has an end must say so in "loop": "check ten times" is
+  maxRuns 10, "until Friday" is an until date. An automation with no ending runs
+  and spends until someone stops it, so only leave "loop" off when the user
+  really does mean indefinitely.`;
 
 function extractJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -358,6 +389,29 @@ export function architectRoutes(deps: AppDeps) {
     });
 
     return c.json({ dashboard, attempts });
+  });
+
+  app.post("/dashboard/edit", async (c) => {
+    const body = await parseBody(
+      c,
+      z.object({
+        current: DashboardSchema,
+        instruction: z.string().min(1).max(20_000),
+        provider: z.string().optional(),
+        model: z.string().optional(),
+      }),
+    );
+    const designer = await resolveDesigner(c.get("workspaceId"), body.provider, body.model);
+    const { dashboard, attempts } = await proposeDashboard({
+      provider: designer.provider,
+      model: designer.model,
+      context: [
+        "This is the current workspace dashboard:",
+        JSON.stringify(body.current, null, 2),
+      ].join("\n"),
+      instruction: `Apply this change and return the complete updated dashboard:\n${body.instruction}`,
+    });
+    return c.json({ dashboard, attempts, current: body.current });
   });
 
   /**

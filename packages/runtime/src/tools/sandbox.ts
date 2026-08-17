@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { mkdir, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { BridgeError } from "@bridge/core";
 
@@ -19,6 +20,24 @@ export interface SandboxPolicy {
   filesystem: FilesystemPolicy;
   /** Directory a `workspace`-scoped agent may touch. */
   root: string;
+  /**
+   * Directories outside the agent's own workspace it may also work in,
+   * from `runtime.sandbox.allowedPaths`.
+   *
+   * This is how an agent gets at your actual files — a notes folder, a
+   * project — without being handed the whole machine. Naming them is the
+   * point: a list you wrote is auditable in a way `filesystem: "full"` is
+   * not.
+   */
+  allowedPaths?: string[];
+}
+
+/** Where a resolved path sits, which decides whether it needs an approval. */
+export type PathScope = "workspace" | "allowed" | "outside";
+
+export interface ResolvedPath {
+  path: string;
+  scope: PathScope;
 }
 
 export function sandboxRoot(baseDir: string, workspaceId: string, agentId: string): string {
@@ -32,15 +51,63 @@ export function sandboxRoot(baseDir: string, workspaceId: string, agentId: strin
  * being created are covered too) — a check on the literal string would let
  * `link -> /etc` through.
  */
+/** Confine to one root. Kept for callers that only ever mean the workspace. */
 export async function resolveWithin(root: string, requested: string): Promise<string> {
-  const realRoot = await realpath(root).catch(async () => {
-    await mkdir(root, { recursive: true });
-    return realpath(root);
-  });
+  await mkdir(root, { recursive: true }).catch(() => undefined);
+  const { path } = await resolvePath({ network: "none", filesystem: "workspace", root }, requested);
+  return path;
+}
 
-  const candidate = isAbsolute(requested) ? resolve(requested) : resolve(realRoot, requested);
+/**
+ * Resolve a model-supplied path against everything this agent may touch, and
+ * say where it landed.
+ *
+ * The scope matters as much as the path: writing inside the agent's own
+ * workspace is ordinary, writing to a folder you explicitly allowed is
+ * expected, and writing anywhere else on your machine is something you
+ * should be asked about — even for an agent set to `full`.
+ */
+export async function resolvePath(policy: SandboxPolicy, requested: string): Promise<ResolvedPath> {
+  assertFilesystemAllowed(policy);
+  await mkdir(policy.root, { recursive: true }).catch(() => undefined);
+  const resolved = await realpathish(expandHome(requested), policy.root);
 
-  // Walk up to the nearest existing ancestor so new files resolve too.
+  const workspace = await realpath(policy.root).catch(() => policy.root);
+  if (contains(workspace, resolved)) return { path: resolved, scope: "workspace" };
+
+  for (const allowed of policy.allowedPaths ?? []) {
+    const real = await realpath(expandHome(allowed)).catch(() => resolve(expandHome(allowed)));
+    if (contains(real, resolved)) return { path: resolved, scope: "allowed" };
+  }
+
+  if (policy.filesystem === "full") return { path: resolved, scope: "outside" };
+
+  throw new BridgeError(
+    "forbidden",
+    `path is outside this agent's workspace: ${requested}. ` +
+      'Add it to the agent\'s allowedPaths, or set its filesystem sandbox to "full".',
+  );
+}
+
+/** `~` is what a person types; nothing downstream should have to know that. */
+export function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  return path.startsWith(`~${sep}`) || path.startsWith("~/")
+    ? join(homedir(), path.slice(2))
+    : path;
+}
+
+function contains(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(root + sep);
+}
+
+/**
+ * Resolve symlinks on the deepest existing ancestor, so a path being created
+ * is covered too — a check on the literal string would let `link -> /etc`
+ * through.
+ */
+async function realpathish(requested: string, base: string): Promise<string> {
+  const candidate = isAbsolute(requested) ? resolve(requested) : resolve(base, requested);
   let probe = candidate;
   let real: string | undefined;
   const suffix: string[] = [];
@@ -53,12 +120,7 @@ export async function resolveWithin(root: string, requested: string): Promise<st
       probe = parent;
     }
   }
-
-  const resolved = real ? resolve(real, ...suffix) : candidate;
-  if (resolved !== realRoot && !resolved.startsWith(realRoot + sep)) {
-    throw new BridgeError("forbidden", `path escapes the agent's workspace: ${requested}`);
-  }
-  return resolved;
+  return real ? resolve(real, ...suffix) : candidate;
 }
 
 export function assertFilesystemAllowed(policy: SandboxPolicy): void {

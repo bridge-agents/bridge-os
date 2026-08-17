@@ -1,5 +1,6 @@
 import { BridgeError } from "@bridge/core";
 import { agents, appendEvent, approvals, runs } from "@bridge/db";
+import { expirePendingApprovals, runBus } from "@bridge/runtime";
 import { and, desc, eq } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
@@ -18,6 +19,7 @@ export function approvalRoutes(deps: AppDeps) {
   app.use("*", requireAuth(deps), requireWorkspace(deps));
 
   app.get("/", async (c) => {
+    await expirePendingApprovals(deps.db);
     const status = c.req.query("status") ?? "pending";
     const rows = await deps.db
       .select({
@@ -32,6 +34,7 @@ export function approvalRoutes(deps: AppDeps) {
         reason: approvals.reason,
         createdAt: approvals.createdAt,
         decidedAt: approvals.decidedAt,
+        expiresAt: approvals.expiresAt,
         agentTitle: agents.name,
       })
       .from(approvals)
@@ -48,6 +51,7 @@ export function approvalRoutes(deps: AppDeps) {
   });
 
   const decide = async (c: Context<AppEnv>, approved: boolean, reason?: string) => {
+    await expirePendingApprovals(deps.db);
     const workspaceId = c.get("workspaceId");
     const approvalId = c.req.param("approvalId");
     if (!approvalId) throw new BridgeError("not_found", "approval not found");
@@ -81,6 +85,8 @@ export function approvalRoutes(deps: AppDeps) {
       .update(runs)
       .set({ status: "queued", heartbeatAt: null })
       .where(and(eq(runs.id, approval.runId), eq(runs.status, "waiting_approval")));
+    // Deciding is the slow part; picking the run back up should not be.
+    runBus.announceWork();
 
     await appendEvent(deps.db, approved ? "approval.approved" : "approval.denied", {
       workspaceId,
@@ -98,6 +104,24 @@ export function approvalRoutes(deps: AppDeps) {
   app.post("/:approvalId/deny", async (c) => {
     const body = await parseBody(c, z.object({ reason: z.string().max(2000).optional() }));
     return decide(c, false, body.reason);
+  });
+
+  app.post("/:approvalId/extend", async (c) => {
+    await expirePendingApprovals(deps.db);
+    const body = await parseBody(c, z.object({ hours: z.number().int().min(1).max(168) }));
+    const [approval] = await deps.db
+      .update(approvals)
+      .set({ expiresAt: new Date(Date.now() + body.hours * 60 * 60 * 1000) })
+      .where(
+        and(
+          eq(approvals.workspaceId, c.get("workspaceId")),
+          eq(approvals.id, c.req.param("approvalId")),
+          eq(approvals.status, "pending"),
+        ),
+      )
+      .returning({ id: approvals.id, expiresAt: approvals.expiresAt });
+    if (!approval) throw new BridgeError("not_found", "no pending approval with that id");
+    return c.json({ approval });
   });
 
   return app;

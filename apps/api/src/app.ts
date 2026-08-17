@@ -5,13 +5,21 @@ import { Hono } from "hono";
 import { agentRoutes, templateRoutes } from "./agents.js";
 import { approvalRoutes } from "./approvals.js";
 import { architectRoutes } from "./architect.js";
+import { attachmentRoutes } from "./attachments.js";
 import { authRoutes } from "./auth.js";
+import { automationRoutes } from "./automations.js";
+import { channelWebhookRoutes } from "./channel-webhooks.js";
+import { channelRoutes } from "./channels.js";
+import { dashboardRoutes } from "./dashboards.js";
 import { dataRoutes } from "./data.js";
 import type { AppDeps, AppEnv } from "./http.js";
+import { memoryRoutes } from "./memory.js";
 import { providerRoutes } from "./providers.js";
 import { runRoutes } from "./runs.js";
+import { searchRoutes } from "./search.js";
 import { secretRoutes } from "./secrets.js";
 import { streamRoutes } from "./stream.js";
+import { mountWebApp } from "./web.js";
 import { workspaceRoutes } from "./workspaces.js";
 
 export const API_VERSION = "0.5.0";
@@ -23,6 +31,13 @@ export const API_VERSION = "0.5.0";
  */
 export function buildApp(deps: AppDeps) {
   const app = new Hono<AppEnv>();
+  /**
+   * Every route lives here and is mounted twice: at the root, which is what
+   * the CLI and any HTTP client use, and under `/api`, which is the path the
+   * web client asks for so one bundle works behind the Vite dev proxy and in
+   * the packaged app where this process also serves the SPA (see web.ts).
+   */
+  const routes = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
     const requestId = crypto.randomUUID();
@@ -41,7 +56,7 @@ export function buildApp(deps: AppDeps) {
     );
   });
 
-  app.get("/health", async (c) => {
+  routes.get("/health", async (c) => {
     let db: "up" | "down" = "up";
     try {
       await pingDb(deps.db);
@@ -54,11 +69,11 @@ export function buildApp(deps: AppDeps) {
     );
   });
 
-  app.get("/v1/meta", (c) =>
+  routes.get("/v1/meta", (c) =>
     c.json({ name: "bridge", version: API_VERSION, specVersion: SPEC_VERSION }),
   );
 
-  app.post("/v1/manifests/validate", async (c) => {
+  routes.post("/v1/manifests/validate", async (c) => {
     const body = await c.req.json().catch(() => {
       throw new BridgeError("validation_failed", "request body must be JSON");
     });
@@ -79,18 +94,31 @@ export function buildApp(deps: AppDeps) {
     return c.json({ valid: true, manifest: result.data });
   });
 
-  app.route("/v1/auth", authRoutes(deps));
-  app.route("/v1/templates", templateRoutes());
-  app.route("/v1/workspaces", workspaceRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId/agents", agentRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId/secrets", secretRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId/data", dataRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId/approvals", approvalRoutes(deps));
-  app.route("/v1/workspaces/:workspaceId", streamRoutes(deps));
+  routes.route("/v1/auth", authRoutes(deps));
+  routes.route("/v1/templates", templateRoutes());
+  routes.route("/v1/workspaces", workspaceRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/agents", agentRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/automations", automationRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/providers", providerRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/channels", channelRoutes(deps));
+  routes.route("/v1/channels", channelWebhookRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/secrets", secretRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/search", searchRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/memory", memoryRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/data", dataRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/dashboard", dashboardRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/approvals", approvalRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/attachments", attachmentRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId", streamRoutes(deps));
   // Run, conversation and lifecycle routes share one workspace-scoped mount.
-  app.route("/v1/workspaces/:workspaceId", runRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId", runRoutes(deps));
+
+  app.route("/", routes);
+  app.route("/api", routes);
+
+  // Only an installed Bridge sets this; in development Vite hosts the client.
+  if (deps.webDir) mountWebApp(app, deps.webDir);
 
   app.notFound((c) =>
     c.json({ error: { code: "not_found", message: `no route for ${c.req.path}` } }, 404),

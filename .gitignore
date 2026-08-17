@@ -10,3 +10,6 @@ coverage/
 
 # Embedded database created by local runs
 .bridge/
+
+# Packaged desktop builds
+apps/desktop/release/

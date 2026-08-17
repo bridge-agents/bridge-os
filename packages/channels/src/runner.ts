@@ -37,85 +37,66 @@ export class ChannelRunner {
     return this.options.channel.stop();
   }
 
-  /**
-   * One conversation per channel sender, so the agent remembers a chat across
-   * messages and across restarts.
-   */
-  private async conversationFor(message: InboundMessage): Promise<string> {
-    const { db, workspaceId, agentId } = this.options;
-    const externalId = `${message.channel}:${message.senderId}`;
+  private async handle(message: InboundMessage): Promise<void> {
+    const reply = await processChannelMessage(this.options, message);
+    if (reply) await this.options.channel.send({ recipientId: message.senderId, text: reply });
+  }
+}
 
-    const [existing] = await db
-      .select({ id: conversations.id })
-      .from(conversations)
-      .where(and(eq(conversations.agentId, agentId), eq(conversations.externalId, externalId)));
-    if (existing) return existing.id;
-
+/** Process one webhook or adapter message through the ordinary durable run path. */
+export async function processChannelMessage(
+  options: Omit<ChannelRunnerOptions, "channel"> & { channel: Pick<Channel, "type"> },
+  message: InboundMessage,
+): Promise<string> {
+  const { db, logger, workspaceId, agentId, channel } = options;
+  const externalId = `${message.channel}:${message.senderId}`;
+  const [existing] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.agentId, agentId), eq(conversations.externalId, externalId)));
+  let conversationId = existing?.id;
+  if (!conversationId) {
     const [created] = await db
       .insert(conversations)
-      .values({
-        id: id("cnv"),
-        workspaceId,
-        agentId,
-        title: externalId,
-        externalId,
-      })
-      // Two messages arriving together would otherwise race to create the thread.
+      .values({ id: id("cnv"), workspaceId, agentId, title: externalId, externalId })
       .onConflictDoNothing({ target: [conversations.agentId, conversations.externalId] })
       .returning({ id: conversations.id });
-    if (created) return created.id;
-
+    conversationId = created?.id;
+  }
+  if (!conversationId) {
     const [raced] = await db
       .select({ id: conversations.id })
       .from(conversations)
       .where(and(eq(conversations.agentId, agentId), eq(conversations.externalId, externalId)));
-    if (!raced) throw new Error("could not open a conversation for this channel message");
-    return raced.id;
+    conversationId = raced?.id;
   }
+  if (!conversationId) throw new Error("could not open a conversation for this channel message");
 
-  private async handle(message: InboundMessage): Promise<void> {
-    const { db, logger, workspaceId, agentId, channel } = this.options;
+  const runId = await enqueueRun(db, {
+    workspaceId,
+    agentId,
+    conversationId,
+    text: message.text,
+    trigger: "channel",
+  });
+  logger.info({ runId, channel: channel.type }, "channel message queued");
 
-    const conversationId = await this.conversationFor(message);
-    const runId = await enqueueRun(db, {
-      workspaceId,
-      agentId,
-      conversationId,
-      text: message.text,
-      trigger: "channel",
-    });
-    logger.info({ runId, channel: channel.type }, "channel message queued");
-
-    const run = await this.waitFor(runId);
-    const reply =
-      run?.status === "succeeded"
+  const pollMs = options.pollMs ?? 500;
+  const deadline = Date.now() + (options.timeoutMs ?? 300_000);
+  while (Date.now() < deadline) {
+    const [run] = await db
+      .select({ status: runs.status, output: runs.output, error: runs.error })
+      .from(runs)
+      .where(eq(runs.id, runId));
+    if (run && (TERMINAL.has(run.status) || run.status === "waiting_approval")) {
+      return run.status === "succeeded"
         ? ((run.output as { content?: string } | null)?.content ?? "")
-        : run?.status === "waiting_approval"
+        : run.status === "waiting_approval"
           ? "This needs your approval in Bridge before I can continue."
-          : `Sorry — that failed.${run?.error ? ` (${run.error})` : ""}`;
-
-    if (reply) await channel.send({ recipientId: message.senderId, text: reply });
-  }
-
-  /**
-   * ponytail: polls the runs table. Correct on every topology (the executor may
-   * be another process); swap for the run bus if the poll ever shows up in a
-   * profile.
-   */
-  private async waitFor(runId: string) {
-    const pollMs = this.options.pollMs ?? 500;
-    const deadline = Date.now() + (this.options.timeoutMs ?? 300_000);
-
-    while (Date.now() < deadline) {
-      const [run] = await this.options.db
-        .select({ status: runs.status, output: runs.output, error: runs.error })
-        .from(runs)
-        .where(eq(runs.id, runId));
-
-      if (run && (TERMINAL.has(run.status) || run.status === "waiting_approval")) return run;
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+          : `Sorry — that failed.${run.error ? ` (${run.error})` : ""}`;
     }
-    this.options.logger.warn({ runId }, "channel gave up waiting for a run");
-    return undefined;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
+  logger.warn({ runId }, "channel gave up waiting for a run");
+  return "The request is still running in Bridge; check the conversation there for the result.";
 }

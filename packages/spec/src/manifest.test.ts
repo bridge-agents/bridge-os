@@ -55,6 +55,21 @@ describe("ManifestSchema", () => {
     expect(safeParseManifest(bad).success).toBe(false);
   });
 
+  it("requires each agent to explicitly allow secrets used by its tools", () => {
+    const manifest = valid();
+    manifest.tools.push({
+      name: "company-mcp",
+      kind: "mcp",
+      config: { transport: "http", url: "https://mcp.example.com" },
+      secretBindings: { "headers.authorization": "company-mcp-token" },
+    });
+    manifest.agents[0]?.tools.push("company-mcp");
+    expect(safeParseManifest(manifest).success).toBe(false);
+
+    manifest.agents[0]?.secrets.push("company-mcp-token");
+    expect(safeParseManifest(manifest).success).toBe(true);
+  });
+
   it("rejects unknown model roles", () => {
     const bad = valid();
     if (bad.agents[1]) bad.agents[1].model = "no-such-role";

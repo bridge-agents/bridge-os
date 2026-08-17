@@ -1,3 +1,4 @@
+import { AlertCircle, Inbox, Loader2 } from "lucide-react";
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -5,89 +6,58 @@ import type {
   SelectHTMLAttributes,
 } from "react";
 import { useId } from "react";
-
-/**
- * Base primitives. Everything references design tokens so that accent and
- * appearance stay themeable without touching component styles (ADR-0006).
- *
- * The visual language is an engineering drawing: measured rules, condensed
- * annotation labels, tight machined radii, and colour spent only where it
- * carries meaning.
- */
+import { Alert, AlertDescription } from "./components/ui/alert.js";
+import { Badge as ShadBadge } from "./components/ui/badge.js";
+import { Button as ShadButton } from "./components/ui/button.js";
+import { Card as ShadCard } from "./components/ui/card.js";
+import { Input as ShadInput } from "./components/ui/input.js";
+import { Label } from "./components/ui/label.js";
+import { Separator } from "./components/ui/separator.js";
+import { cn } from "./lib/utils.js";
 
 export function Button({
   variant = "primary",
-  className = "",
+  className,
+  type = "button",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "type"> & {
+  type?: "button" | "submit" | "reset";
   variant?: "primary" | "ghost" | "danger" | "quiet";
 }) {
-  const styles = {
-    primary:
-      "bg-accent text-[var(--bridge-accent-contrast)] border border-transparent hover:opacity-90 active:opacity-80",
-    ghost:
-      "border border-border bg-bg-raised text-text hover:border-border-strong hover:bg-bg-overlay",
-    danger: "border border-danger/40 bg-transparent text-danger hover:bg-danger/10",
-    quiet: "border border-transparent text-text-muted hover:bg-bg-overlay hover:text-text",
-  }[variant];
+  const mapped = {
+    primary: "default",
+    ghost: "outline",
+    danger: "destructive",
+    quiet: "ghost",
+  }[variant] as "default" | "outline" | "destructive" | "ghost";
 
-  return (
-    <button
-      type="button"
-      className={`inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${styles} ${className}`}
-      {...props}
-    />
-  );
+  return <ShadButton type={type} variant={mapped} className={className} {...props} />;
 }
 
-export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={`w-full rounded-[var(--radius-sm)] border border-border bg-bg px-3 py-2 text-sm text-text outline-none transition placeholder:text-text-faint hover:border-border-strong focus:border-border-strong ${className}`}
-      {...props}
-    />
-  );
+export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return <ShadInput className={className} {...props} />;
 }
 
-/**
- * Select, with the platform's own chrome removed. A native dropdown renders
- * in the OS's colours and radius, which reads as a hole punched in the page —
- * the one control that ignores every token the rest of the app obeys.
- */
-export function Select({
-  className = "",
-  children,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement>) {
+/** Kept native for the legacy option-children call sites; new screens use shadcn Select. */
+export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <div className="relative inline-flex">
+    <div className="relative inline-flex min-w-0">
       <select
-        className={`appearance-none rounded-[var(--radius-sm)] border border-border bg-bg-raised py-1.5 pl-2.5 pr-8 text-sm text-text outline-none transition hover:border-border-strong ${className}`}
+        className={cn(
+          "h-8 min-w-0 appearance-none rounded-lg border border-input bg-background py-1 pl-2.5 pr-8 text-sm text-foreground outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30",
+          className,
+        )}
         {...props}
       >
         {children}
       </select>
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        focusable="false"
-        className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-faint"
-      >
-        <path d="m6 9 6 6 6-6" />
-      </svg>
+      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+        ▾
+      </span>
     </div>
   );
 }
 
-/**
- * Labelled form control. The child receives the id so the label is
- * explicitly associated with its input rather than relying on nesting.
- */
 export function Field({
   label,
   hint,
@@ -99,34 +69,18 @@ export function Field({
 }) {
   const id = useId();
   return (
-    <div className="flex flex-col gap-1.5">
-      <label
-        htmlFor={id}
-        className="font-condensed text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted"
-      >
-        {label}
-      </label>
+    <div className="flex flex-col gap-2">
+      <Label htmlFor={id}>{label}</Label>
       {children(id)}
-      {hint && <span className="text-xs text-text-faint">{hint}</span>}
+      {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
     </div>
   );
 }
 
-export function Card({ className = "", children }: { className?: string; children: ReactNode }) {
-  return (
-    <div
-      className={`rounded-[var(--radius-md)] border border-border bg-bg-raised p-4 ${className}`}
-    >
-      {children}
-    </div>
-  );
+export function Card({ className, children }: { className?: string; children: ReactNode }) {
+  return <ShadCard className={cn("gap-0 rounded-lg p-4 py-4", className)}>{children}</ShadCard>;
 }
 
-/**
- * A titled section, ruled like a drawing's title block. The dimension line
- * runs to the edge so the eye reads the heading as a measured span rather
- * than a floating label.
- */
 export function SectionHeader({
   title,
   description,
@@ -138,19 +92,16 @@ export function SectionHeader({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3">
-        <h2 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
-          {title}
-        </h2>
-        <span className="dimension" aria-hidden="true" />
+      <div className="flex min-w-0 items-center gap-3">
+        <h2 className="shrink-0 text-sm font-semibold text-foreground">{title}</h2>
+        <Separator className="min-w-6 flex-1" />
         {action}
       </div>
-      {description && <p className="max-w-2xl text-sm text-text-muted">{description}</p>}
+      {description && <p className="max-w-3xl text-sm text-muted-foreground">{description}</p>}
     </div>
   );
 }
 
-/** Small status marker. Tone carries meaning, so it is never decorative. */
 export function Badge({
   tone = "neutral",
   children,
@@ -159,47 +110,49 @@ export function Badge({
   children: ReactNode;
 }) {
   const styles = {
-    neutral: "border-border text-text-muted",
-    success: "border-success/40 text-success",
-    warning: "border-warning/40 text-warning",
-    danger: "border-danger/40 text-danger",
+    neutral: "border-border bg-secondary text-secondary-foreground",
+    success:
+      "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300",
+    warning:
+      "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300",
+    danger: "border-destructive/20 bg-destructive/10 text-destructive",
   }[tone];
-
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border px-1.5 py-0.5 font-mono text-[11px] leading-4 ${styles}`}
-    >
+    <ShadBadge variant="outline" className={styles}>
       {children}
-    </span>
+    </ShadBadge>
   );
 }
 
 export function ErrorText({ children }: { children: ReactNode }) {
   return children ? (
-    <p role="alert" className="text-sm text-danger">
-      {children}
-    </p>
+    <Alert variant="destructive" className="bg-background">
+      <AlertCircle />
+      <AlertDescription>{children}</AlertDescription>
+    </Alert>
   ) : null;
 }
 
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-2 rounded-[var(--radius-md)] border border-dashed border-border px-6 py-14 text-center">
-      <p className="font-condensed text-sm font-semibold uppercase tracking-[0.08em] text-text">
-        {title}
-      </p>
-      {children && <div className="max-w-sm text-sm text-text-muted">{children}</div>}
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed bg-muted/20 px-6 py-14 text-center">
+      <span className="mb-2 flex size-9 items-center justify-center rounded-lg border bg-background text-muted-foreground">
+        <Inbox className="size-4" />
+      </span>
+      <p className="font-medium text-foreground">{title}</p>
+      {children && <div className="max-w-md text-sm text-muted-foreground">{children}</div>}
     </div>
   );
 }
 
 export function Spinner({ label = "Loading" }: { label?: string }) {
   return (
-    <p
-      className="py-16 text-center font-mono text-xs uppercase tracking-[0.1em] text-text-faint"
+    <div
+      className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground"
       aria-live="polite"
     >
-      {label}…
-    </p>
+      <Loader2 className="size-4 animate-spin" />
+      {label}
+    </div>
   );
 }

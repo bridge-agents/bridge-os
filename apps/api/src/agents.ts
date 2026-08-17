@@ -1,5 +1,14 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { BridgeError, newAgentId } from "@bridge/core";
 import { agents, appendEvent } from "@bridge/db";
+import {
+  CHARTER_FILES,
+  type CharterFile,
+  charterDir,
+  ensureCharter,
+  readCharter,
+} from "@bridge/runtime";
 import {
   blankManifest,
   dashboardTemplates,
@@ -12,7 +21,7 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { requireAuth, requireWorkspace } from "./auth.js";
+import { requireAuth, requireRole, requireWorkspace } from "./auth.js";
 import { type AppDeps, type AppEnv, parseBody } from "./http.js";
 
 /** Every creation path converges here: one validated manifest, or an error. */
@@ -118,6 +127,45 @@ export function agentRoutes(deps: AppDeps) {
     if (!row) throw new BridgeError("not_found", "agent not found");
     // Re-validated on read: storage never becomes a second schema authority.
     return c.json({ agent: { ...row, manifest: validate(row.manifest) } });
+  });
+
+  /**
+   * The four files that say who an agent is. Served from its own directory,
+   * where the agent can read and edit them too — this endpoint exists so a
+   * person does not have to open a terminal to do the same.
+   */
+  app.get("/:agentId/charter", async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const agentId = c.req.param("agentId");
+    const [row] = await deps.db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.id, agentId)));
+    if (!row) throw new BridgeError("not_found", "agent not found");
+
+    const dataDir = join(deps.dataDir ?? "./.bridge", "agents");
+    await ensureCharter(dataDir, workspaceId, agentId, validate(row.manifest)).catch(() => []);
+    return c.json({ charter: await readCharter(dataDir, workspaceId, agentId) });
+  });
+
+  app.put("/:agentId/charter/:file", requireRole("owner", "admin"), async (c) => {
+    const workspaceId = c.get("workspaceId");
+    const agentId = c.req.param("agentId");
+    const file = c.req.param("file") as CharterFile;
+    if (!CHARTER_FILES.includes(file)) {
+      throw new BridgeError("validation_failed", `an agent has no "${file}"`);
+    }
+    const body = await parseBody(c, z.object({ content: z.string().max(100_000) }));
+    const [row] = await deps.db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.workspaceId, workspaceId), eq(agents.id, agentId)));
+    if (!row) throw new BridgeError("not_found", "agent not found");
+
+    const directory = charterDir(join(deps.dataDir ?? "./.bridge", "agents"), workspaceId, agentId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, file), body.content, "utf8");
+    return c.json({ file, saved: true });
   });
 
   /** Full-manifest replace; partial edits are computed client-side or by the Architect. */

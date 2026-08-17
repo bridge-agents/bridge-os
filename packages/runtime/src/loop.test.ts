@@ -98,7 +98,7 @@ function planWithTool(tool: BridgeTool, policy: RuntimePlan["permissions"]): Run
     tools: [{ name: tool.name, kind: "native", config: {} }],
     permissions: policy,
     limits: { maxConcurrentRuns: 1, maxRunSeconds: 900 },
-    sandbox: { network: "restricted", filesystem: "workspace" },
+    sandbox: { network: "restricted", filesystem: "workspace", allowedPaths: [] },
     deployment: { target: "local", background: false },
   };
 }
@@ -117,7 +117,7 @@ describe("compiler", () => {
   });
 
   it("carries tools, limits, sandbox and deployment through", () => {
-    expect(plan.tools.map((tool) => tool.name)).toEqual(["web-search"]);
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["web-search", "filesystem"]);
     expect(plan.limits.maxRunSeconds).toBeGreaterThan(0);
     expect(plan.sandbox.filesystem).toBe("workspace");
     expect(plan.deployment.target).toBe("local");
@@ -479,7 +479,7 @@ describe("delegation", () => {
       tools: [{ name: "shell", kind: "native", config: {} }],
       permissions: { default: "ask", rules: [] },
       limits: { maxConcurrentRuns: 1, maxRunSeconds: 900 },
-      sandbox: { network: "restricted", filesystem: "workspace" },
+      sandbox: { network: "restricted", filesystem: "workspace", allowedPaths: [] },
       deployment: { target: "local", background: false },
     };
 

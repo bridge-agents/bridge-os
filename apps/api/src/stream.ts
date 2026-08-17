@@ -1,6 +1,6 @@
 import { BridgeError } from "@bridge/core";
-import { runSteps, runs } from "@bridge/db";
-import { type RunEvent, runBus } from "@bridge/runtime";
+import { runSteps, runStreamEvents, runs } from "@bridge/db";
+import { runBus } from "@bridge/runtime";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -12,12 +12,9 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
 /**
  * Live view of a run.
  *
- * Two sources, deliberately: the in-process bus carries token deltas the
- * instant they arrive, and a database poll picks up steps and status changes
- * even when the executor is a *different process* (a server deployment).
- * Steps are de-duplicated by sequence number, so a client sees each exactly
- * once regardless of which source delivered it — and a client that connects
- * late still gets everything, because the database is the durable record.
+ * Deltas, steps, and status all come from durable database records. That keeps
+ * a separate API and worker correct without requiring Redis, and lets a late
+ * client replay the complete stream in sequence.
  */
 export function streamRoutes(deps: AppDeps) {
   const app = new Hono<AppEnv>();
@@ -35,14 +32,11 @@ export function streamRoutes(deps: AppDeps) {
 
     return streamSSE(c, async (stream) => {
       let lastSeq = -1;
+      let lastStreamSeq = 0;
       let lastStatus = "";
       let closed = false;
-      const queue: RunEvent[] = [];
-
-      const unsubscribe = runBus.subscribe(runId, (event) => queue.push(event));
       stream.onAbort(() => {
         closed = true;
-        unsubscribe();
       });
 
       const send = (event: string, data: unknown) =>
@@ -50,6 +44,16 @@ export function streamRoutes(deps: AppDeps) {
 
       /** Emit anything durable that this client has not seen yet. */
       const drainDatabase = async (): Promise<string> => {
+        const streamEvents = await deps.db
+          .select()
+          .from(runStreamEvents)
+          .where(and(eq(runStreamEvents.runId, runId), gt(runStreamEvents.seq, lastStreamSeq)))
+          .orderBy(asc(runStreamEvents.seq));
+        for (const event of streamEvents) {
+          lastStreamSeq = event.seq;
+          if (event.type === "delta") await send("delta", event.data);
+        }
+
         const steps = await deps.db
           .select()
           .from(runSteps)
@@ -79,26 +83,40 @@ export function streamRoutes(deps: AppDeps) {
         return status;
       };
 
-      await drainDatabase();
+      /**
+       * Woken by the runtime when it shares this process, and by the clock
+       * otherwise.
+       *
+       * Polling alone had to be fast to feel live, and fast polling on an
+       * embedded database means three queries every 100ms competing with the
+       * very run they are watching — the writer and the reader fighting over
+       * one connection. Waiting on the bus is both quicker and quieter: text
+       * appears as it is produced, and an idle stream costs one query a
+       * second instead of thirty.
+       */
+      let wake: (() => void) | undefined;
+      const unsubscribe = runBus.subscribe(runId, () => wake?.());
+      const nextTick = () =>
+        new Promise<void>((resolve) => {
+          wake = resolve;
+          setTimeout(resolve, 1000).unref?.();
+        });
 
-      while (!closed) {
-        // Deltas first: they are the part that has to feel immediate.
-        while (queue.length > 0) {
-          const event = queue.shift();
-          if (event?.type === "delta") {
-            await send("delta", { agentName: event.agentName, text: event.text });
-          }
+      try {
+        await drainDatabase();
+
+        while (!closed) {
+          const status = await drainDatabase();
+          // A run waiting on a human is finished as far as this stream cares —
+          // the client watches the approvals queue and reconnects after deciding.
+          if (TERMINAL.has(status) || status === "waiting_approval") break;
+
+          await nextTick();
         }
-
-        const status = await drainDatabase();
-        // A run waiting on a human is finished as far as this stream cares —
-        // the client watches the approvals queue and reconnects after deciding.
-        if (TERMINAL.has(status) || status === "waiting_approval") break;
-
-        await new Promise((resolve) => setTimeout(resolve, 250));
+      } finally {
+        unsubscribe();
       }
 
-      unsubscribe();
       await send("done", { status: lastStatus });
     });
   });

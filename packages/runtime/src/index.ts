@@ -1,4 +1,18 @@
+export { expirePendingApprovals } from "./approval-expiry.js";
+export {
+  AutomationRunner,
+  type AutomationRunnerOptions,
+} from "./automations.js";
+export { dailyBudgetExceeded } from "./budget.js";
 export { type RunEvent, runBus } from "./bus.js";
+export {
+  CHARTER_FILES,
+  type CharterFile,
+  charterDir,
+  charterFor,
+  ensureCharter,
+  readCharter,
+} from "./charter.js";
 export {
   type AgentPlan,
   compile,
@@ -11,6 +25,12 @@ export {
   enqueueRun,
   RunExecutor,
 } from "./executor.js";
+export { workspaceImageResolver } from "./images.js";
+export {
+  type ExtractedNode,
+  KnowledgeConsolidator,
+  parseExtraction,
+} from "./knowledge.js";
 export type {
   ApprovalDecision,
   ApprovalRequest,
@@ -25,7 +45,19 @@ export {
 } from "./loop.js";
 export { connectedProviders, providerResolver } from "./resolver.js";
 export {
+  type AutomationKind,
+  catchUpFrom,
+  describeSchedule,
+  isValidTimezone,
+  kindOf,
+  type LoopState,
+  loopEnded,
+  nextFireTime,
+} from "./schedule.js";
+export { workspaceSearchResolver } from "./search.js";
+export {
   EncryptedDbSecretStore,
+  rotateEncryptedSecrets,
   type SecretRef,
   type SecretStore,
 } from "./secrets.js";

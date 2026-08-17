@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { apiAddressFile, appConfigDir, appDataDir } from "@bridge/core";
 
 /**
  * The CLI talks to exactly the same public API as the web app — no private
@@ -13,8 +14,20 @@ export interface CliConfig {
   workspaceId?: string;
 }
 
-const CONFIG_PATH = join(homedir(), ".bridge", "config.json");
+const CONFIG_PATH = join(appConfigDir(), "config.json");
+/** Where the CLI kept its config before it moved to the OS config directory. */
+const LEGACY_CONFIG_PATH = join(homedir(), ".bridge", "config.json");
 const DEFAULT_API = "http://localhost:4000";
+
+/** Is this URL on the machine we are running on? */
+export function isLoopback(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
 
 export async function loadConfig(): Promise<CliConfig> {
   const fromEnv = {
@@ -23,18 +36,38 @@ export async function loadConfig(): Promise<CliConfig> {
     ...(process.env.BRIDGE_WORKSPACE ? { workspaceId: process.env.BRIDGE_WORKSPACE } : {}),
   };
 
-  const saved = await readFile(CONFIG_PATH, "utf8")
-    .then((text) => JSON.parse(text) as Partial<CliConfig>)
-    .catch(() => ({}));
+  const saved = await read(CONFIG_PATH);
+  // One-time move: an existing ~/.bridge/config.json keeps working and is
+  // relocated on the next save rather than asking anyone to log in again.
+  const legacy = saved ? undefined : await read(LEGACY_CONFIG_PATH);
 
   // Environment wins over the saved file, which wins over the default.
-  return { apiUrl: DEFAULT_API, ...saved, ...fromEnv };
+  const config = { apiUrl: DEFAULT_API, ...saved, ...legacy, ...fromEnv };
+
+  /**
+   * An installed Bridge takes whatever port the OS gives it, so when we are
+   * pointed at this machine, believe the address it published over the port
+   * we assumed. Only for loopback: someone configured against a real server
+   * must never be quietly redirected to their own laptop.
+   */
+  if (!fromEnv.apiUrl && isLoopback(config.apiUrl)) {
+    const running = await readFile(apiAddressFile(appDataDir()), "utf8").catch(() => undefined);
+    if (running?.trim()) config.apiUrl = running.trim();
+  }
+  return config;
+}
+
+async function read(path: string): Promise<Partial<CliConfig> | undefined> {
+  return readFile(path, "utf8")
+    .then((text) => JSON.parse(text) as Partial<CliConfig>)
+    .catch(() => undefined);
 }
 
 export async function saveConfig(config: CliConfig): Promise<void> {
   await mkdir(dirname(CONFIG_PATH), { recursive: true });
   // 0600: the file holds a session token.
   await writeFile(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await rename(LEGACY_CONFIG_PATH, `${LEGACY_CONFIG_PATH}.migrated`).catch(() => undefined);
 }
 
 export class CliError extends Error {}

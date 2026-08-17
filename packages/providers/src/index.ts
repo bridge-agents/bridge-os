@@ -1,5 +1,11 @@
 export { AnthropicProvider } from "./anthropic.js";
 export {
+  type CliAuthStatus,
+  type CliProviderId,
+  CliSubscriptionProvider,
+  cliAuthStatus,
+} from "./cli-subscription.js";
+export {
   type OpenAiCompatibleOptions,
   OpenAiCompatibleProvider,
 } from "./openai-compatible.js";

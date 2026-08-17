@@ -41,6 +41,34 @@ describe("MCP over stdio", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe("boom");
   });
+
+  it("preserves generated image blocks as artifacts", async () => {
+    const client = new McpClient({
+      async request(method) {
+        if (method === "initialize") return {};
+        return {
+          content: [
+            { type: "text", text: "Created the image." },
+            { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          ],
+        };
+      },
+      async close() {},
+    });
+
+    const result = await client.callTool("generate", {});
+    expect(result).toMatchObject({
+      ok: true,
+      output: "Created the image.\n[Generated image attached]",
+      artifacts: [
+        {
+          name: "generated-image-2.png",
+          mimeType: "image/png",
+          dataBase64: "aGVsbG8=",
+        },
+      ],
+    });
+  });
 });
 
 describe("MCP tools as Bridge tools", () => {

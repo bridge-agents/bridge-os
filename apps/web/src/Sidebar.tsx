@@ -1,49 +1,100 @@
 import bridgeMark from "@bridge/ui/assets/bridge-icon-transparent.png";
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
-import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { type AgentSummary, api, type ConversationSummary } from "./api.js";
 import {
-  AgentsIcon,
-  ApprovalsIcon,
-  AutomationIcon,
-  ChannelsIcon,
-  ChatIcon,
-  ChevronIcon,
-  DashboardIcon,
-  KnowledgeIcon,
-  MoonIcon,
-  ObservabilityIcon,
-  OptimizerIcon,
-  PlusIcon,
-  ProvidersIcon,
-  SettingsIcon,
-  SidebarIcon,
-  SunIcon,
-} from "./icons.jsx";
+  ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
+  CircleGauge,
+  Clock3,
+  Moon,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
+  Sun,
+  Trash2,
+} from "lucide-react";
+import { type ComponentType, useCallback, useEffect, useState } from "react";
+import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { AgentArtwork } from "./AgentArtwork.jsx";
+import { type AgentSummary, api, type ConversationSummary } from "./api.js";
+import { newChatParams } from "./chatNavigation.js";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./components/ui/alert-dialog.js";
+import { Badge } from "./components/ui/badge.js";
+import { Button, buttonVariants } from "./components/ui/button.js";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./components/ui/collapsible.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu.js";
+import { Input } from "./components/ui/input.js";
+import { ScrollArea } from "./components/ui/scroll-area.js";
+import { Separator } from "./components/ui/separator.js";
+import { Sheet, SheetContent, SheetTitle } from "./components/ui/sheet.js";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip.js";
+import { cn } from "./lib/utils.js";
+import { NavArtwork } from "./NavArtwork.jsx";
 import { useSession } from "./session.jsx";
 import { useTheme } from "./theme.jsx";
 
-/**
- * The application shell's navigation.
- *
- * Sections that grow without bound (agents, chat history) collapse
- * independently and remember their state, and the whole rail collapses to
- * icons. Pages the roadmap has promised but that do not exist yet are listed
- * and visibly disabled: a nav that hides the shape of the product teaches
- * nothing, and a nav that links to nothing is worse.
- */
 const COLLAPSED_KEY = "bridge:sidebar-collapsed";
 const SECTIONS_KEY = "bridge:sidebar-sections";
 
 interface NavItem {
   to: string;
   label: string;
-  icon: (props: { className?: string }) => ReactNode;
-  /** Roadmap phase this arrives in; present means "not built yet". */
+  icon: ComponentType<{ className?: string }>;
+  iconClassName?: string;
+  contentClassName?: string;
+  startsNewChat?: boolean;
   planned?: string;
   badge?: number;
 }
+
+const ChatIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="chat" className={className} />
+);
+const DashboardIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="dashboard" className={className} />
+);
+const ApprovalsIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="approvals" className={className} />
+);
+const ChannelsIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="channels" className={className} />
+);
+const SettingsIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="settings" className={className} />
+);
+const AutomationsIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="automations" className={className} />
+);
+const KnowledgeIcon = ({ className }: { className?: string }) => (
+  <NavArtwork name="knowledge" className={className} />
+);
 
 function useStoredFlag(key: string, initial: boolean) {
   const [value, setValue] = useState(() => {
@@ -60,7 +111,6 @@ function useStoredFlag(key: string, initial: boolean) {
   return [value, set] as const;
 }
 
-/** Collapsible section state, all sections in one record. */
 function useSections(initial: Record<string, boolean>) {
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     try {
@@ -69,142 +119,487 @@ function useSections(initial: Record<string, boolean>) {
       return initial;
     }
   });
-
-  const toggle = useCallback((key: string) => {
+  const setSection = useCallback((key: string, value: boolean) => {
     setOpen((current) => {
-      const next = { ...current, [key]: !current[key] };
+      const next = { ...current, [key]: value };
       localStorage.setItem(SECTIONS_KEY, JSON.stringify(next));
       return next;
     });
   }, []);
-
-  // A section never seen before reads as closed rather than undefined.
-  const isOpen = useCallback((key: string) => open[key] ?? false, [open]);
-  return [isOpen, toggle] as const;
+  return [open, setSection] as const;
 }
 
-function ItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function NavigationItem({
+  item,
+  collapsed,
+  onNavigate,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
   const Icon = item.icon;
-  const label = item.planned ? `${item.label} — coming in ${item.planned}` : item.label;
-
-  if (item.planned) {
-    return (
-      <span
-        title={label}
-        aria-disabled="true"
-        className="flex cursor-not-allowed items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm text-text-faint"
-      >
-        <Icon />
-        {!collapsed && (
-          <>
-            <span className="truncate">{item.label}</span>
-            <span className="ml-auto rounded-[var(--radius-sm)] border border-border px-1.5 font-mono text-[10px] leading-4 text-text-faint">
-              soon
-            </span>
-          </>
-        )}
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isActive = !item.planned && location.pathname === item.to;
+  const content = item.planned ? (
+    <div
+      aria-disabled="true"
+      className={cn(
+        buttonVariants({ variant: "ghost", size: collapsed ? "icon" : "default" }),
+        "w-full cursor-not-allowed justify-start text-sidebar-foreground/45 hover:bg-transparent hover:text-sidebar-foreground/45",
+        collapsed && "justify-center",
+      )}
+    >
+      <span className={cn("flex min-w-0 items-center gap-1.5", item.contentClassName)}>
+        <Icon className={cn("size-5", item.iconClassName)} />
+        {!collapsed && <span className="truncate">{item.label}</span>}
       </span>
-    );
-  }
-
-  return (
+      {!collapsed && (
+        <Badge variant="outline" className="ml-auto h-4 px-1 text-[10px] font-normal">
+          {item.planned}
+        </Badge>
+      )}
+    </div>
+  ) : (
     <NavLink
       to={item.to}
-      title={collapsed ? item.label : undefined}
-      className={({ isActive }) =>
-        `relative flex items-center gap-2.5 rounded-[var(--radius-sm)] py-1.5 text-sm transition ${
-          collapsed ? "justify-center px-0" : "px-2.5"
-        } ${
-          isActive
-            ? "bg-bg-overlay text-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-accent"
-            : "text-text-muted hover:bg-bg-overlay/60 hover:text-text"
-        }`
-      }
-    >
-      <Icon />
-      {!collapsed && (
-        <>
-          <span className="truncate">{item.label}</span>
-          {item.badge ? (
-            <span className="ml-auto rounded-[var(--radius-sm)] border border-warning/40 px-1.5 font-mono text-[10px] leading-4 text-warning">
-              {item.badge}
-            </span>
-          ) : null}
-        </>
+      onClick={(event) => {
+        if (item.startsNewChat) {
+          event.preventDefault();
+          navigate({ pathname: "/chat", search: newChatParams().toString() });
+        }
+        onNavigate?.();
+      }}
+      className={cn(
+        buttonVariants({ variant: "ghost", size: collapsed ? "icon" : "default" }),
+        "relative w-full justify-start text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        collapsed && "justify-center",
+        isActive &&
+          "bg-sidebar-accent font-medium text-sidebar-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-sidebar-primary",
       )}
+    >
+      <span className={cn("flex min-w-0 items-center gap-1.5", item.contentClassName)}>
+        <Icon className={cn("size-5", item.iconClassName)} />
+        {!collapsed && <span className="truncate">{item.label}</span>}
+      </span>
+      {!collapsed && item.badge ? (
+        <Badge className="ml-auto h-5 min-w-5 bg-amber-100 px-1.5 text-amber-800 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300">
+          {item.badge}
+        </Badge>
+      ) : null}
     </NavLink>
+  );
+
+  if (!collapsed) return content;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{content}</TooltipTrigger>
+      <TooltipContent side="right">{item.label}</TooltipContent>
+    </Tooltip>
   );
 }
 
-function Section({
-  id,
-  title,
+function NavigationSection({
+  label,
   open,
-  onToggle,
-  action,
+  onOpenChange,
   children,
 }: {
-  id: string;
-  title: string;
+  label: string;
   open: boolean;
-  onToggle: () => void;
-  action?: ReactNode;
-  children: ReactNode;
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center gap-1 pr-1">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          aria-controls={`${id}-items`}
-          className="flex flex-1 items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1 font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint transition hover:text-text-muted"
+    <Collapsible open={open} onOpenChange={onOpenChange} className="px-2">
+      <CollapsibleTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mb-1 w-full justify-start px-2 text-xs font-medium text-sidebar-foreground/55 hover:bg-sidebar-accent"
         >
-          <ChevronIcon className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} />
-          {title}
-          <span className="dimension ml-1" aria-hidden="true" />
-        </button>
-        {action}
+          <ChevronDown className={cn("transition-transform", !open && "-rotate-90")} />
+          {label}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-0.5 pb-2">{children}</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+interface SidebarPanelProps {
+  collapsed: boolean;
+  agents: AgentSummary[];
+  history: ConversationSummary[];
+  pendingApprovals: number;
+  sections: Record<string, boolean>;
+  setSection: (key: string, value: boolean) => void;
+  onNavigate?: () => void;
+  onCollapse?: () => void;
+  onConversationUpdate: (conversation: ConversationSummary) => void;
+  onConversationDelete: (conversationId: string) => void;
+}
+
+function ConversationItem({
+  conversation,
+  active,
+  workspaceId,
+  onNavigate,
+  onUpdate,
+  onDelete,
+}: {
+  conversation: ConversationSummary;
+  active: boolean;
+  workspaceId: string;
+  onNavigate?: () => void;
+  onUpdate: (conversation: ConversationSummary) => void;
+  onDelete: (conversationId: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [title, setTitle] = useState(conversation.title ?? "");
+  const [busy, setBusy] = useState(false);
+  const label = conversation.title ?? `${conversation.agentName} conversation`;
+  const displayLabel = label.length > 28 ? `${label.slice(0, 28).trimEnd()}...` : label;
+
+  const update = async (body: { title?: string; pinned?: boolean }) => {
+    setBusy(true);
+    try {
+      const { conversation: saved } = await api.updateConversation(
+        workspaceId,
+        conversation.id,
+        body,
+      );
+      onUpdate({ ...conversation, ...saved });
+      setRenameOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.deleteConversation(workspaceId, conversation.id);
+      onDelete(conversation.id);
+      if (active) navigate(`/chat?agent=${conversation.agentId}`, { replace: true });
+      setDeleteOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        className={cn(
+          "group/conversation grid min-h-10 w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 overflow-hidden rounded-md px-1 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          active && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
+        )}
+      >
+        <NavLink
+          to={`/chat?agent=${conversation.agentId}&conversation=${conversation.id}`}
+          onClick={onNavigate}
+          title={label}
+          className="flex min-w-0 items-center gap-2 overflow-hidden px-1 py-2"
+        >
+          {conversation.pinned ? (
+            <Pin className="size-3.5 shrink-0" />
+          ) : (
+            <Clock3 className="size-3.5 shrink-0" />
+          )}
+          <span className="block min-w-0 truncate">{displayLabel}</span>
+        </NavLink>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-8 shrink-0 text-sidebar-foreground/60 hover:bg-sidebar-border hover:text-sidebar-foreground data-[state=open]:bg-sidebar-border data-[state=open]:text-sidebar-foreground"
+              aria-label={`Conversation actions for ${label}`}
+            >
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="w-40">
+            <DropdownMenuItem onSelect={() => void update({ pinned: !conversation.pinned })}>
+              {conversation.pinned ? <PinOff /> : <Pin />}
+              {conversation.pinned ? "Unpin" : "Pin"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                setTitle(conversation.title ?? "");
+                setRenameOpen(true);
+              }}
+            >
+              <Pencil /> Rename
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+              <Trash2 /> Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      {open && (
-        <div id={`${id}-items`} className="flex flex-col gap-0.5 pb-1">
-          {children}
-        </div>
-      )}
+
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename conversation</DialogTitle>
+            <DialogDescription>Use a short name that is easy to scan in history.</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={120}
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && title.trim()) void update({ title: title.trim() });
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy || !title.trim()}
+              onClick={() => void update({ title: title.trim() })}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the full message history and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void remove()}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+function SidebarPanel({
+  collapsed,
+  agents,
+  history,
+  pendingApprovals,
+  sections,
+  setSection,
+  onNavigate,
+  onCollapse,
+  onConversationUpdate,
+  onConversationDelete,
+}: SidebarPanelProps) {
+  const { workspace } = useSession();
+  const { appearance, toggle: toggleTheme } = useTheme();
+  const location = useLocation();
+  const [params] = useSearchParams();
+  const openConversation = location.pathname === "/chat" ? params.get("conversation") : null;
+
+  const primary: NavItem[] = [
+    { to: "/chat", label: "Chat", icon: ChatIcon, startsNewChat: true },
+    { to: "/dashboards", label: "Dashboards", icon: DashboardIcon },
+    {
+      to: "/agents",
+      label: "Agents",
+      icon: AgentArtwork,
+      iconClassName: "size-5 scale-[1.4]",
+      contentClassName: "-translate-x-1",
+    },
+    { to: "/knowledge", label: "Knowledge", icon: KnowledgeIcon },
+    { to: "/approvals", label: "Approvals", icon: ApprovalsIcon, badge: pendingApprovals },
+    { to: "/automations", label: "Automations", icon: AutomationsIcon },
+    { to: "/channels", label: "Channels", icon: ChannelsIcon },
+    { to: "/settings", label: "Settings", icon: SettingsIcon },
+  ];
+  const planned: NavItem[] = [
+    { to: "#", label: "Observability", icon: CircleGauge, planned: "P9" },
+  ];
+  const deployed = agents.filter((agent) => agent.status === "deployed");
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
+      <div
+        className={cn(
+          "flex h-16 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3",
+          collapsed && "justify-center px-1.5",
+        )}
+      >
+        <img src={bridgeMark} alt="Bridge" className="size-10 shrink-0 object-contain" />
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold leading-none">Bridge</div>
+            <div className="mt-1 truncate text-[11px] text-sidebar-foreground/55">
+              Agent operations
+            </div>
+          </div>
+        )}
+        {onCollapse && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              "text-sidebar-foreground/55 hover:bg-sidebar-accent",
+              collapsed && "absolute left-[3.95rem] z-10 border bg-sidebar shadow-sm",
+            )}
+            onClick={onCollapse}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <ChevronsRight /> : <ChevronsLeft />}
+          </Button>
+        )}
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <nav className="space-y-0.5 px-2 pb-3" aria-label="Main navigation">
+          {primary.map((item) => (
+            <NavigationItem
+              key={item.to}
+              item={item}
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </nav>
+
+        {!collapsed && (
+          <>
+            <Separator className="mb-2" />
+            <NavigationSection
+              label="Deployed agents"
+              open={sections.agents ?? true}
+              onOpenChange={(open) => setSection("agents", open)}
+            >
+              {deployed.length ? (
+                deployed.map((agent) => (
+                  <NavLink
+                    key={agent.id}
+                    to={`/chat?agent=${agent.id}`}
+                    onClick={onNavigate}
+                    className="flex h-7 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  >
+                    <AgentArtwork className="size-4" />
+                    <span className="truncate">{agent.name}</span>
+                  </NavLink>
+                ))
+              ) : (
+                <p className="px-2 pb-2 text-xs text-sidebar-foreground/45">No deployed agents</p>
+              )}
+            </NavigationSection>
+
+            <NavigationSection
+              label="Recent conversations"
+              open={sections.history ?? true}
+              onOpenChange={(open) => setSection("history", open)}
+            >
+              {history.length ? (
+                history
+                  .slice(0, 20)
+                  .map((conversation) => (
+                    <ConversationItem
+                      key={conversation.id}
+                      conversation={conversation}
+                      active={openConversation === conversation.id}
+                      workspaceId={workspace?.id ?? ""}
+                      onNavigate={onNavigate}
+                      onUpdate={onConversationUpdate}
+                      onDelete={onConversationDelete}
+                    />
+                  ))
+              ) : (
+                <p className="px-2 pb-2 text-xs text-sidebar-foreground/45">No conversations yet</p>
+              )}
+            </NavigationSection>
+
+            <NavigationSection
+              label="Roadmap"
+              open={sections.planned ?? false}
+              onOpenChange={(open) => setSection("planned", open)}
+            >
+              {planned.map((item) => (
+                <NavigationItem key={item.label} item={item} collapsed={false} />
+              ))}
+            </NavigationSection>
+          </>
+        )}
+      </ScrollArea>
+
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-2 border-t border-sidebar-border p-2",
+          collapsed && "justify-center",
+        )}
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              className="text-sidebar-foreground/65 hover:bg-sidebar-accent"
+              aria-label={appearance === "dark" ? "Use light theme" : "Use dark theme"}
+            >
+              {appearance === "dark" ? <Sun /> : <Moon />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            {appearance === "dark" ? "Use light theme" : "Use dark theme"}
+          </TooltipContent>
+        </Tooltip>
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium">{workspace?.name}</p>
+            <p className="truncate text-[11px] text-sidebar-foreground/45">Current workspace</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-export function Sidebar() {
+export function Sidebar({
+  mobileOpen,
+  onMobileOpenChange,
+}: {
+  mobileOpen: boolean;
+  onMobileOpenChange: (open: boolean) => void;
+}) {
   const { workspace } = useSession();
-  const { appearance, toggle: toggleTheme } = useTheme();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [params] = useSearchParams();
-
-  /*
-   * NavLink's own active state ignores the query string, which would light up
-   * every conversation at once — the thread *is* the query here, so selection
-   * has to be computed from it.
-   */
-  const onChat = location.pathname === "/chat";
-  const openConversation = onChat ? params.get("conversation") : null;
-  const openAgent = onChat ? params.get("agent") : null;
-
   const [collapsed, setCollapsed] = useStoredFlag(COLLAPSED_KEY, false);
-  const [sectionOpen, toggleSection] = useSections({ agents: true, history: true });
-
+  const [sections, setSection] = useSections({ agents: true, history: true, planned: false });
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState(0);
 
-  // The sidebar reflects live state: a new chat, a deployed agent, or an agent
-  // pausing for approval should all appear without a reload.
+  const updateConversation = useCallback((conversation: ConversationSummary) => {
+    setHistory((current) =>
+      current
+        .map((item) => (item.id === conversation.id ? conversation : item))
+        .sort((a, b) => Number(b.pinned) - Number(a.pinned)),
+    );
+  }, []);
+  const deleteConversation = useCallback((conversationId: string) => {
+    setHistory((current) => current.filter((item) => item.id !== conversationId));
+  }, []);
+
   useEffect(() => {
     if (!workspace) return;
     let cancelled = false;
-
     const poll = async () => {
       const [agentList, conversationList, approvals] = await Promise.all([
         api.agents(workspace.id).catch(() => ({ agents: [] })),
@@ -216,189 +611,49 @@ export function Sidebar() {
       setHistory(conversationList.conversations);
       setPendingApprovals(approvals.approvals.length);
     };
-
     void poll();
-    const interval = setInterval(poll, 5000);
+    const interval = setInterval(poll, 5_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
   }, [workspace]);
 
-  const primary: NavItem[] = [
-    { to: "/chat", label: "Chat", icon: ChatIcon },
-    { to: "/dashboards", label: "Dashboards", icon: DashboardIcon },
-    { to: "/agents", label: "Agents", icon: AgentsIcon },
-    { to: "/approvals", label: "Approvals", icon: ApprovalsIcon, badge: pendingApprovals },
-    { to: "/providers", label: "Providers", icon: ProvidersIcon },
-    { to: "/settings", label: "Settings", icon: SettingsIcon },
-  ];
-
-  const planned: NavItem[] = [
-    { to: "#", label: "Channels", icon: ChannelsIcon, planned: "Phase 7" },
-    { to: "#", label: "Automations", icon: AutomationIcon, planned: "Phase 8" },
-    { to: "#", label: "Observability", icon: ObservabilityIcon, planned: "Phase 9" },
-    { to: "#", label: "Knowledge", icon: KnowledgeIcon, planned: "Phase 9" },
-    { to: "#", label: "Optimizer", icon: OptimizerIcon, planned: "Phase 10" },
-  ];
-
-  const deployed = agents.filter((agent) => agent.status === "deployed");
+  const panelProps = {
+    agents,
+    history,
+    pendingApprovals,
+    sections,
+    setSection,
+    onConversationUpdate: updateConversation,
+    onConversationDelete: deleteConversation,
+  };
 
   return (
-    <aside
-      className="flex shrink-0 flex-col border-r border-border bg-bg-raised transition-[width] duration-200"
-      style={{
-        width: collapsed ? "var(--bridge-sidebar-collapsed)" : "var(--bridge-sidebar-width)",
-      }}
-    >
-      {/*
-        Collapsed, the mark and the toggle stack: side by side they are wider
-        than the rail and spill over the border into the page.
-      */}
-      <div
-        className={`flex px-2 py-3 ${collapsed ? "flex-col items-center gap-2" : "items-center gap-2 px-3"}`}
+    <>
+      <aside
+        className={cn(
+          "relative hidden h-screen shrink-0 border-r border-sidebar-border transition-[width] duration-200 md:block",
+          collapsed ? "w-[4.5rem]" : "w-64",
+        )}
       >
-        {/* Square, not a circle: the mark is a bridge silhouette, and cropping
-            it to a round avatar cuts the deck off at both ends. */}
-        <img src={bridgeMark} alt="Bridge" className="h-9 w-9 shrink-0 object-contain" />
-        {!collapsed && (
-          <span className="font-condensed text-base font-semibold uppercase tracking-[0.14em]">
-            Bridge
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className={`rounded-[var(--radius-sm)] p-1 text-text-faint transition hover:bg-bg-overlay hover:text-text ${
-            collapsed ? "" : "ml-auto"
-          }`}
-        >
-          <SidebarIcon />
-        </button>
-      </div>
+        <SidebarPanel
+          {...panelProps}
+          collapsed={collapsed}
+          onCollapse={() => setCollapsed(!collapsed)}
+        />
+      </aside>
 
-      <div className="flex flex-col gap-1 px-2 pb-2">
-        <button
-          type="button"
-          onClick={() => navigate("/chat")}
-          title="New chat"
-          className={`flex items-center gap-2.5 rounded-[var(--radius-sm)] border border-border py-1.5 text-sm text-text transition hover:border-border-strong hover:bg-bg-overlay ${
-            collapsed ? "justify-center px-0" : "px-2.5"
-          }`}
-        >
-          <PlusIcon />
-          {!collapsed && <span>New chat</span>}
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate("/agents")}
-          title="New agent"
-          className={`flex items-center gap-2.5 rounded-[var(--radius-sm)] py-1.5 text-sm text-text-muted transition hover:bg-bg-overlay hover:text-text ${
-            collapsed ? "justify-center px-0" : "px-2.5"
-          }`}
-        >
-          <AgentsIcon />
-          {!collapsed && <span>New agent</span>}
-        </button>
-      </div>
-
-      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2">
-        <div className="flex flex-col gap-0.5">
-          {primary.map((item) => (
-            <ItemLink key={item.label} item={item} collapsed={collapsed} />
-          ))}
-        </div>
-
-        {!collapsed && (
-          <>
-            <Section
-              id="agents"
-              title="Agents"
-              open={sectionOpen("agents")}
-              onToggle={() => toggleSection("agents")}
-            >
-              {deployed.length === 0 ? (
-                <p className="px-2.5 py-1 text-xs text-text-faint">No deployed agents</p>
-              ) : (
-                deployed.map((agent) => (
-                  <NavLink
-                    key={agent.id}
-                    to={`/chat?agent=${agent.id}`}
-                    className={`relative flex items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm transition ${
-                      openAgent === agent.id && !openConversation
-                        ? "bg-bg-overlay text-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-accent"
-                        : "text-text-muted hover:bg-bg-overlay/60 hover:text-text"
-                    }`}
-                  >
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-                    <span className="truncate">{agent.name}</span>
-                  </NavLink>
-                ))
-              )}
-            </Section>
-
-            <Section
-              id="history"
-              title="Chat history"
-              open={sectionOpen("history")}
-              onToggle={() => toggleSection("history")}
-            >
-              {history.length === 0 ? (
-                <p className="px-2.5 py-1 text-xs text-text-faint">Nothing yet</p>
-              ) : (
-                history.slice(0, 25).map((thread) => (
-                  <NavLink
-                    key={thread.id}
-                    to={`/chat?agent=${thread.agentId}&conversation=${thread.id}`}
-                    className={`relative truncate rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm transition ${
-                      openConversation === thread.id
-                        ? "bg-bg-overlay text-text before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[2px] before:rounded-full before:bg-accent"
-                        : "text-text-muted hover:bg-bg-overlay/60 hover:text-text"
-                    }`}
-                    title={thread.title ?? thread.agentName}
-                  >
-                    {thread.title ?? `${thread.agentName} conversation`}
-                  </NavLink>
-                ))
-              )}
-            </Section>
-
-            <Section
-              id="planned"
-              title="Planned"
-              open={sectionOpen("planned")}
-              onToggle={() => toggleSection("planned")}
-            >
-              {planned.map((item) => (
-                <ItemLink key={item.label} item={item} collapsed={collapsed} />
-              ))}
-            </Section>
-          </>
-        )}
-      </nav>
-
-      <div
-        className={`mt-auto flex items-center gap-2 border-t border-border py-2 ${
-          collapsed ? "justify-center px-2" : "px-3"
-        }`}
-      >
-        <button
-          type="button"
-          onClick={toggleTheme}
-          title={appearance === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          aria-label={appearance === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          className="rounded-[var(--radius-sm)] p-1.5 text-text-faint transition hover:bg-bg-overlay hover:text-text"
-        >
-          {appearance === "dark" ? <SunIcon /> : <MoonIcon />}
-        </button>
-        {!collapsed && (
-          <span className="truncate font-condensed text-[11px] uppercase tracking-[0.1em] text-text-faint">
-            {workspace?.name}
-          </span>
-        )}
-      </div>
-    </aside>
+      <Sheet open={mobileOpen} onOpenChange={onMobileOpenChange}>
+        <SheetContent side="left" className="w-[min(19rem,88vw)] p-0" showCloseButton={false}>
+          <SheetTitle className="sr-only">Bridge navigation</SheetTitle>
+          <SidebarPanel
+            {...panelProps}
+            collapsed={false}
+            onNavigate={() => onMobileOpenChange(false)}
+          />
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }

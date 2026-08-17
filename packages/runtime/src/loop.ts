@@ -5,6 +5,7 @@ import type {
   Provider,
   ProviderToolDefinition,
   TokenUsage,
+  ToolArtifact,
   ToolCall,
 } from "@bridge/sdk";
 import { decideToolPermission, type PermissionEffect } from "@bridge/spec";
@@ -76,7 +77,10 @@ export interface LoopDeps {
    * so a turn that ends in a tool call still works.
    */
   onDelta?(delta: { agentName: string; text: string }): void;
+  onArtifacts?(artifacts: ToolArtifact[]): void;
   isCancelled(): Promise<boolean>;
+  /** Checked at each model boundary so daily budgets stop an in-progress tool loop. */
+  isBudgetExceeded?(usage: TokenUsage): Promise<boolean>;
   context: { workspaceId: string; agentId: string; runId: string };
   log?: (message: string, data?: Record<string, unknown>) => void;
   deadlineAt?: number;
@@ -235,6 +239,8 @@ export async function runAgentLoop(options: {
           error: `invalid input: ${parsed.error.issues.map((issue) => `${issue.path.join(".")} ${issue.message}`).join("; ")}`,
         };
 
+    if (result.artifacts?.length) deps.onArtifacts?.(result.artifacts);
+
     await deps.onStep({
       type: "tool_call",
       agentName: frame.agentName,
@@ -298,6 +304,9 @@ export async function runAgentLoop(options: {
 
   while (frames.length > 0) {
     if (await deps.isCancelled()) return { status: "cancelled", content: "", usage };
+    if (await deps.isBudgetExceeded?.(usage)) {
+      return { status: "limit_reached", content: "", usage };
+    }
     if (deps.deadlineAt !== undefined && now() > deps.deadlineAt) {
       return { status: "limit_reached", content: "", usage };
     }
@@ -421,6 +430,8 @@ export async function runAgentLoop(options: {
       // held the live array would see turns that were not part of its request.
       messages: [...frame.messages],
       ...(definitions.length ? { tools: definitions } : {}),
+      ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
+      ...(agent.serviceTier ? { serviceTier: agent.serviceTier } : {}),
     };
 
     // Stream when someone is watching and the adapter supports it; otherwise

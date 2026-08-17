@@ -36,6 +36,7 @@ export async function createTestApp(): Promise<TestApp> {
       logger,
       secretKey: parseSecretKey(generateSecretKey()),
       secureCookies: false,
+      dataDir,
     }),
     handle,
     logs,
@@ -68,15 +69,17 @@ export async function signUp(app: TestApp["app"], email: string): Promise<TestUs
 
 /** Authenticated request helper using the bearer path (the CLI's path). */
 export function as(app: TestApp["app"], user: Pick<TestUser, "token">) {
-  return (path: string, init: RequestInit = {}) =>
-    app.request(path, {
+  return (path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${user.token}`);
+    if (!(init.body instanceof FormData) && !headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+    return app.request(path, {
       ...init,
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${user.token}`,
-        ...(init.headers ?? {}),
-      },
+      headers,
     });
+  };
 }
 
 export { createLogger };

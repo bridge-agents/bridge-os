@@ -12,9 +12,20 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
 }
 
+/** A file attached to a user turn, loaded only for the provider call. */
+export interface ModelAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataBase64: string;
+}
+
 export interface ChatMessage {
   role: MessageRole;
   content: string;
+  /** Present on user messages that include uploaded files. */
+  attachments?: ModelAttachment[];
   /** Present on assistant messages requesting tool execution. */
   toolCalls?: ToolCall[];
   /** Present on role:"tool" messages carrying a tool result. */
@@ -34,6 +45,10 @@ export interface CompletionRequest {
   tools?: ProviderToolDefinition[];
   maxTokens?: number;
   temperature?: number;
+  /** Provider-supported reasoning depth selected for this run. */
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+  /** Faster, higher-cost serving tier where the selected model exposes it. */
+  serviceTier?: "default" | "fast";
 }
 
 export interface TokenUsage {
@@ -62,7 +77,11 @@ export interface CompletionChunk {
 
 export interface ModelInfo {
   id: string;
+  displayName?: string;
   contextWindow?: number;
+  reasoningEfforts?: CompletionRequest["reasoningEffort"][];
+  serviceTiers?: CompletionRequest["serviceTier"][];
+  inputModalities?: ("text" | "image" | "file")[];
 }
 
 export type DeltaHandler = (text: string) => void;

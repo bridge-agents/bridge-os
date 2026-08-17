@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { type Approval, api, type SourceData, type Widget } from "../api.js";
+import { Button } from "../components/ui/button.js";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card.js";
+import { Skeleton } from "../components/ui/skeleton.js";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table.js";
+import { ToolIcon } from "../ToolIcon.jsx";
 import { Badge } from "../ui.jsx";
 import { Chart } from "./Chart.jsx";
 
@@ -21,14 +33,14 @@ import { Chart } from "./Chart.jsx";
 
 function Frame({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
-    <section className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-border bg-bg-raised p-4">
+    <Card className="h-full rounded-lg">
       {title && (
-        <h3 className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-muted">
-          {title}
-        </h3>
+        <CardHeader className="pb-1">
+          <CardTitle className="text-sm">{title}</CardTitle>
+        </CardHeader>
       )}
-      {children}
-    </section>
+      <CardContent className={title ? undefined : "pt-0"}>{children}</CardContent>
+    </Card>
   );
 }
 
@@ -77,7 +89,7 @@ function Metric({ workspaceId, widget }: { workspaceId: string; widget: Widget }
       {missing ? (
         <Unavailable reason={`No source called "${source}".`} />
       ) : !data ? (
-        <p className="font-mono text-sm text-text-faint">…</p>
+        <Skeleton className="h-8 w-28" />
       ) : data.kind === "metric" ? (
         <p className="font-condensed text-3xl font-semibold tracking-tight text-text">
           {formatValue(data.value, data.unit)}
@@ -102,7 +114,7 @@ function ChartWidget({ workspaceId, widget }: { workspaceId: string; widget: Wid
       {missing ? (
         <Unavailable reason={`No source called "${source}".`} />
       ) : !data ? (
-        <p className="py-10 text-center font-mono text-xs text-text-faint">…</p>
+        <Skeleton className="h-40 w-full" />
       ) : data.kind === "series" ? (
         <Chart points={data.points} chartType={chartType} unit={data.unit} />
       ) : (
@@ -126,7 +138,7 @@ function Rows({ workspaceId, widget }: { workspaceId: string; widget: Widget }) 
   if (!data) {
     return (
       <Frame title={widget.title}>
-        <p className="font-mono text-xs text-text-faint">…</p>
+        <Skeleton className="h-16 w-full" />
       </Frame>
     );
   }
@@ -147,37 +159,34 @@ function Rows({ workspaceId, widget }: { workspaceId: string; widget: Widget }) 
 
   return (
     <Frame title={widget.title}>
-      <div className="-mx-1 overflow-x-auto">
-        <table className="w-full border-collapse text-left">
-          <thead>
-            <tr>
+      <div className="-mx-2">
+        <Table>
+          <TableHeader>
+            <TableRow>
               {data.columns.map((column) => (
-                <th
-                  key={column}
-                  className="border-b border-border px-1 pb-1.5 font-condensed text-[10px] font-semibold uppercase tracking-[0.1em] text-text-faint"
-                >
+                <TableHead key={column} className="h-8 text-xs text-muted-foreground">
                   {column}
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {data.rows.map((row) => (
-              <tr key={row.join("|")} className="border-b border-border/60 last:border-0">
+              <TableRow key={row.join("|")}>
                 {row.map((cell, index) => (
-                  <td
+                  <TableCell
                     // biome-ignore lint/suspicious/noArrayIndexKey: cells are positional
                     key={index}
-                    className="max-w-[16rem] truncate px-1 py-1.5 font-mono text-[11px] text-text-muted"
+                    className="max-w-[16rem] truncate font-mono text-xs text-muted-foreground"
                     title={String(cell ?? "")}
                   >
-                    {cell ?? "—"}
-                  </td>
+                    {cell ?? "-"}
+                  </TableCell>
                 ))}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </Frame>
   );
@@ -205,16 +214,19 @@ function ApprovalQueue({ workspaceId, widget }: { workspaceId: string; widget: W
   return (
     <Frame title={widget.title ?? "Approvals"}>
       {!pending ? (
-        <p className="font-mono text-xs text-text-faint">…</p>
+        <Skeleton className="h-12 w-full" />
       ) : pending.length === 0 ? (
         <p className="py-2 text-sm text-text-faint">Nothing waiting.</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {pending.slice(0, 5).map((approval) => (
             <li key={approval.id} className="flex items-center justify-between gap-3">
-              <span className="truncate text-sm">
-                <span className="font-mono text-text">{approval.toolName}</span>
-                <span className="text-text-muted"> · {approval.action}</span>
+              <span className="flex min-w-0 items-center gap-2 text-sm">
+                <ToolIcon tool={approval.toolName} className="size-5 rounded-sm" />
+                <span className="truncate">
+                  <span className="font-mono text-text">{approval.toolName}</span>
+                  <span className="text-text-muted"> · {approval.action}</span>
+                </span>
               </span>
               <Link
                 to="/approvals"
@@ -247,7 +259,7 @@ function AgentStatus({ workspaceId, widget }: { workspaceId: string; widget: Wid
   return (
     <Frame title={widget.title ?? "Agents"}>
       {!agents ? (
-        <p className="font-mono text-xs text-text-faint">…</p>
+        <Skeleton className="h-12 w-full" />
       ) : agents.length === 0 ? (
         <p className="py-2 text-sm text-text-faint">No agents yet.</p>
       ) : (
@@ -324,9 +336,9 @@ export function WidgetView({ workspaceId, widget }: { workspaceId: string; widge
     case "chat":
       return (
         <Frame title={widget.title ?? "Chat"}>
-          <Link to="/chat" className="text-sm text-text-muted hover:text-text">
-            Open chat →
-          </Link>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/chat">Open chat</Link>
+          </Button>
         </Frame>
       );
     default:

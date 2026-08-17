@@ -14,6 +14,7 @@ export {
   dashboardTemplates,
   getDashboardTemplate,
 } from "./dashboards.js";
+export { formatDuration, isDuration, parseDuration } from "./duration.js";
 export {
   type BridgeEvent,
   BridgeEventSchema,
@@ -29,12 +30,18 @@ export {
   DeploymentSchema,
   type DeploymentTarget,
   DeploymentTargetSchema,
+  type EventTrigger,
   EventTriggerSchema,
+  type LoopBounds,
+  LoopBoundsSchema,
   type Manifest,
   ManifestSchema,
   migrateManifest,
   parseManifest,
+  type ReasoningEffort,
+  ReasoningEffortSchema,
   RuntimeConfigSchema,
+  type ScheduleTrigger,
   ScheduleTriggerSchema,
   SPEC_VERSION,
   safeParseManifest,

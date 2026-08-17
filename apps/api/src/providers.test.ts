@@ -1,6 +1,7 @@
 import { generateSecretKey, parseSecretKey } from "@bridge/core";
 import { EncryptedDbSecretStore } from "@bridge/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { enrichModel } from "./providers.js";
 import { as, createTestApp, signUp, type TestApp, type TestUser } from "./testing.js";
 
 let ctx: TestApp;
@@ -20,7 +21,47 @@ afterEach(async () => {
 
 const connect = (body: unknown) => api(path, { method: "PUT", body: JSON.stringify(body) });
 
+describe("provider model capabilities", () => {
+  it("offers no reasoning only when a model advertises reasoning controls", () => {
+    expect(
+      enrichModel("openai", {
+        id: "reasoning-model",
+        reasoningEfforts: ["low", "medium", "high"],
+      }).reasoningEfforts,
+    ).toEqual(["none", "low", "medium", "high"]);
+    expect(enrichModel("openai", { id: "plain-model" }).reasoningEfforts).toEqual([]);
+  });
+
+  it("does not duplicate a provider-advertised no-reasoning option", () => {
+    expect(
+      enrichModel("openai", {
+        id: "reasoning-model",
+        reasoningEfforts: ["none", "low", "high"],
+      }).reasoningEfforts,
+    ).toEqual(["none", "low", "high"]);
+  });
+});
+
 describe("provider configuration", () => {
+  it("serves the model route and expanded provider catalog", async () => {
+    const models = await api(`${path}/models`);
+    expect(models.status).toBe(200);
+    expect(await models.json()).toEqual({ models: [] });
+
+    const available = (await (await api(`${path}/available`)).json()) as { providers: string[] };
+    expect(available.providers).toEqual(
+      expect.arrayContaining([
+        "google-gemini",
+        "github-copilot",
+        "deepseek",
+        "moonshot",
+        "minimax",
+        "mistral",
+        "qwen-cloud",
+      ]),
+    );
+  });
+
   it("connects a hosted provider with an API key", async () => {
     const res = await connect({ provider: "anthropic", apiKey: "sk-ant-example-key-value" });
     expect(res.status).toBe(201);

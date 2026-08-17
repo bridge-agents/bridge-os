@@ -36,6 +36,62 @@
       "when": 1786586306097,
       "tag": "0004_wild_kree",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786673943544,
+      "tag": "0005_absurd_wolf_cub",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786683271197,
+      "tag": "0006_condemned_turbo",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786718522912,
+      "tag": "0007_left_ozymandias",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786718988935,
+      "tag": "0008_overrated_captain_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786725194476,
+      "tag": "0009_wonderful_franklin_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786758607791,
+      "tag": "0010_sweet_the_santerians",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786842116772,
+      "tag": "0011_odd_revanche",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786887763244,
+      "tag": "0012_third_night_thrasher",
+      "breakpoints": true
     }
   ]
 }

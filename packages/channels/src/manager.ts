@@ -4,8 +4,13 @@ import type { SecretStore } from "@bridge/runtime";
 import type { Channel } from "@bridge/sdk";
 import { safeParseManifest } from "@bridge/spec";
 import { and, eq } from "drizzle-orm";
+import { ReliableChannel } from "./delivery.js";
 import { DiscordChannel } from "./discord.js";
+import { IMessageChannel } from "./imessage.js";
+import { MatrixChannel } from "./matrix.js";
 import { ChannelRunner } from "./runner.js";
+import { SignalChannel } from "./signal.js";
+import { SlackChannel } from "./slack.js";
 import { TelegramChannel } from "./telegram.js";
 
 /**
@@ -19,6 +24,7 @@ export type ChannelFactory = (
   config: Record<string, unknown>,
   token: string | undefined,
   logger: Logger,
+  resolvedSecrets?: Record<string, string>,
 ) => Channel;
 
 export const channelFactories: Record<string, ChannelFactory> = {
@@ -36,6 +42,36 @@ export const channelFactories: Record<string, ChannelFactory> = {
     if (!token) throw new Error("discord needs a bot token secret");
     return new DiscordChannel({ ...(config as { apiUrl?: string }), token });
   },
+  slack: (config, _token, logger, resolvedSecrets = {}) => {
+    const appToken = resolvedSecrets.appTokenSecret;
+    const botToken = resolvedSecrets.botTokenSecret;
+    if (!appToken || !botToken) throw new Error("slack needs app and bot token secrets");
+    return new SlackChannel({
+      ...(config as { apiUrl?: string }),
+      appToken,
+      botToken,
+      onError: (err) => logger.warn({ err }, "slack socket failed"),
+    });
+  },
+  imessage: (config, _token, logger) =>
+    new IMessageChannel({
+      ...(config as { pollMs?: number }),
+      onError: (err) => logger.warn({ err }, "iMessage poll failed"),
+    }),
+  signal: (config, _token, logger) =>
+    new SignalChannel({
+      ...(config as { account: string; command?: string; pollMs?: number }),
+      onError: (err) => logger.warn({ err }, "Signal receive failed"),
+    }),
+  matrix: (config, _token, logger, resolvedSecrets = {}) => {
+    const accessToken = resolvedSecrets.accessTokenSecret;
+    if (!accessToken) throw new Error("Matrix needs an access token secret");
+    return new MatrixChannel({
+      ...(config as { homeserver: string; userId?: string }),
+      accessToken,
+      onError: (err) => logger.warn({ err }, "Matrix sync failed"),
+    });
+  },
 };
 
 export interface ChannelManagerOptions {
@@ -45,6 +81,7 @@ export interface ChannelManagerOptions {
   factories?: Record<string, ChannelFactory>;
   /** Overrides for ChannelRunner timings; tests use them, production does not. */
   runner?: { pollMs?: number; timeoutMs?: number };
+  delivery?: { minIntervalMs?: number; maxAttempts?: number };
 }
 
 /**
@@ -63,7 +100,12 @@ export class ChannelManager {
     const factories = this.options.factories ?? channelFactories;
 
     const deployed = await db
-      .select({ id: agents.id, workspaceId: agents.workspaceId, manifest: agents.manifest })
+      .select({
+        id: agents.id,
+        workspaceId: agents.workspaceId,
+        manifest: agents.manifest,
+        updatedAt: agents.updatedAt,
+      })
       .from(agents)
       .where(eq(agents.status, "deployed"));
 
@@ -77,7 +119,7 @@ export class ChannelManager {
       }
 
       for (const binding of parsed.data.channels) {
-        const key = `${agent.id}:${binding.type}`;
+        const key = `${agent.id}:${binding.type}:${agent.updatedAt.getTime()}`;
         wanted.add(key);
         if (this.running.has(key)) continue;
 
@@ -88,13 +130,15 @@ export class ChannelManager {
         }
 
         try {
-          const token = await this.resolveToken(agent.workspaceId, binding.config);
+          const resolvedSecrets = await this.resolveSecrets(agent.workspaceId, binding.config);
+          const token = resolvedSecrets.tokenSecret;
+          const channel = factory(binding.config, token, logger, resolvedSecrets);
           const runner = new ChannelRunner({
             db,
             logger,
             workspaceId: agent.workspaceId,
             agentId: agent.id,
-            channel: factory(binding.config, token, logger),
+            channel: new ReliableChannel(channel, this.options.delivery),
             ...this.options.runner,
           });
           await runner.start();
@@ -118,21 +162,28 @@ export class ChannelManager {
     }
   }
 
-  /** `config.tokenSecret` names a row in the secret store; we resolve it here. */
-  private async resolveToken(
+  private async resolveSecrets(
     workspaceId: string,
     config: Record<string, unknown>,
-  ): Promise<string | undefined> {
-    const name = config.tokenSecret;
-    if (typeof name !== "string") return undefined;
+  ): Promise<Record<string, string>> {
+    const resolved: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config)) {
+      if (!key.endsWith("Secret") || typeof value !== "string") continue;
+      const token = await this.resolveNamedSecret(workspaceId, value);
+      resolved[key] = token;
+    }
+    return resolved;
+  }
 
+  private async resolveNamedSecret(workspaceId: string, name: string): Promise<string> {
     const [row] = await this.options.db
       .select({ id: secrets.id })
       .from(secrets)
       .where(and(eq(secrets.workspaceId, workspaceId), eq(secrets.name, name)));
     if (!row) throw new Error(`no secret named "${name}" in this workspace`);
-
-    return this.options.secretStore.reveal(workspaceId, row.id);
+    const value = await this.options.secretStore.reveal(workspaceId, row.id);
+    if (!value) throw new Error(`secret "${name}" is unavailable`);
+    return value;
   }
 
   async stop(): Promise<void> {

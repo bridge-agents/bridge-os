@@ -43,6 +43,25 @@ interface WireResponse {
   error?: { message?: string };
 }
 
+const MAX_RETRIES = 4;
+/** Too many requests, and the transient server-side failures. */
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+
+/**
+ * How long to wait before trying again. The server's own `retry-after` wins,
+ * whether it is given in seconds or as a date; otherwise exponential with a
+ * little jitter, so a burst of parallel runs does not retry in lockstep.
+ */
+export function retryDelay(retryAfter: string | null, attempt: number): number {
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 60_000);
+    const when = Date.parse(retryAfter);
+    if (!Number.isNaN(when)) return Math.min(Math.max(0, when - Date.now()), 60_000);
+  }
+  return Math.min(2 ** attempt * 500, 8_000) + Math.random() * 250;
+}
+
 export class OpenAiCompatibleProvider implements Provider {
   readonly id: string;
   private readonly baseUrl: string;
@@ -67,7 +86,7 @@ export class OpenAiCompatibleProvider implements Provider {
   private body(request: CompletionRequest, stream: boolean) {
     return JSON.stringify({
       model: request.model,
-      messages: request.messages.map((message) => toWireMessage(message)),
+      messages: request.messages.map((message) => toWireMessage(message, this.id)),
       ...(request.tools?.length
         ? {
             tools: request.tools.map((tool) => ({
@@ -82,13 +101,60 @@ export class OpenAiCompatibleProvider implements Provider {
         : {}),
       ...(request.maxTokens ? { max_tokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(request.reasoningEffort ? { reasoning_effort: request.reasoningEffort } : {}),
+      ...(request.serviceTier === "fast" ? { service_tier: "fast" } : {}),
       // Servers that support it report usage on a final chunk; the rest ignore it.
       ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     });
   }
 
+  /**
+   * Every request goes through here, and is retried when the answer says
+   * "not now".
+   *
+   * A rate limit is a delay, not a failure, but without this it became one:
+   * the call threw, the run failed, and the executor retried the whole run
+   * from the first token — paying again for everything already generated.
+   * `retry-after` is obeyed when the server sends it, since it knows better
+   * than any backoff curve we could invent.
+   *
+   * A refused connection is translated rather than retried: `fetch` throws a
+   * bare `TypeError: fetch failed` with no status, no URL and no cause, which
+   * reads as "something broke" when it almost always means a local model
+   * server is not running or a base URL has a typo.
+   */
+  private async send(path: string, init: RequestInit): Promise<Response> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      let response: Response;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}${path}`, init);
+      } catch (cause) {
+        lastError = cause;
+        // A refused connection is not a rate limit: nothing is listening, and
+        // waiting will not change that.
+        break;
+      }
+
+      if (!RETRYABLE.has(response.status) || attempt === MAX_RETRIES) return response;
+      const wait = retryDelay(response.headers.get("retry-after"), attempt);
+      // Drain the body so the connection can be reused.
+      await response.text().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+
+    throw new Error(
+      `Could not reach ${this.id} at ${this.baseUrl}. ` +
+        (isLocal(this.baseUrl)
+          ? "Is the local model server running?"
+          : "Check the base URL and this machine's connection.") +
+        ` (${lastError instanceof Error ? lastError.message : String(lastError)})`,
+      { cause: lastError },
+    );
+  }
+
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+    const res = await this.send("/chat/completions", {
       method: "POST",
       headers: this.headers(),
       body: this.body(request, false),
@@ -113,7 +179,7 @@ export class OpenAiCompatibleProvider implements Provider {
     request: CompletionRequest,
     onDelta: DeltaHandler,
   ): Promise<CompletionResult> {
-    const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+    const res = await this.send("/chat/completions", {
       method: "POST",
       headers: this.headers(),
       body: this.body(request, true),
@@ -196,7 +262,7 @@ export class OpenAiCompatibleProvider implements Provider {
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<CompletionChunk> {
-    const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+    const res = await this.send("/chat/completions", {
       method: "POST",
       headers: this.headers(),
       body: this.body(request, true),
@@ -215,7 +281,7 @@ export class OpenAiCompatibleProvider implements Provider {
   }
 
   async listModels(): Promise<ModelInfo[]> {
-    const res = await this.fetchImpl(`${this.baseUrl}/models`, { headers: this.headers() });
+    const res = await this.send("/models", { headers: this.headers() });
     if (!res.ok) return [];
     const body = (await res.json().catch(() => ({}))) as { data?: { id?: string }[] };
     return (body.data ?? []).flatMap((model) => (model.id ? [{ id: model.id }] : []));
@@ -274,7 +340,7 @@ function toResult(body: WireResponse): CompletionResult {
   };
 }
 
-function toWireMessage(message: ChatMessage) {
+function toWireMessage(message: ChatMessage, providerId: string) {
   if (message.role === "tool") {
     return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
   }
@@ -289,7 +355,66 @@ function toWireMessage(message: ChatMessage) {
       })),
     };
   }
+  if (message.role === "user" && message.attachments?.length) {
+    const content: Record<string, unknown>[] = [];
+    if (message.content) content.push({ type: "text", text: message.content });
+
+    for (const attachment of message.attachments) {
+      const dataUrl = `data:${attachment.mimeType};base64,${attachment.dataBase64}`;
+      if (attachment.mimeType.startsWith("image/")) {
+        content.push({ type: "image_url", image_url: { url: dataUrl } });
+      } else if (attachment.mimeType === "application/pdf" && providerId === "openai") {
+        content.push({
+          type: "file",
+          file: { filename: attachment.name, file_data: dataUrl },
+        });
+      } else if (isTextFile(attachment.mimeType, attachment.name)) {
+        content.push({
+          type: "text",
+          text: `\n<attachment name="${attachment.name}">\n${decodeText(attachment.dataBase64)}\n</attachment>`,
+        });
+      } else {
+        content.push({
+          type: "text",
+          text: `\n[Attached file: ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)]`,
+        });
+      }
+    }
+    return { role: "user", content };
+  }
   return { role: message.role, content: message.content };
+}
+
+/** Loopback and private hosts get advice about a local server, not the internet. */
+function isLocal(baseUrl: string): boolean {
+  try {
+    const { hostname } = new URL(baseUrl);
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname.endsWith(".local") ||
+      hostname.startsWith("192.168.") ||
+      hostname.startsWith("10.")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isTextFile(mimeType: string, name: string): boolean {
+  return (
+    mimeType.startsWith("text/") ||
+    ["application/json", "application/xml", "application/javascript"].includes(mimeType) ||
+    /\.(md|mdx|txt|csv|tsv|json|ya?ml|xml|html?|css|js|jsx|ts|tsx|py|rb|go|rs|java|sql|sh)$/i.test(
+      name,
+    )
+  );
+}
+
+function decodeText(dataBase64: string): string {
+  const bytes = Uint8Array.from(atob(dataBase64), (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 function parseArguments(raw: string | undefined): Record<string, unknown> {

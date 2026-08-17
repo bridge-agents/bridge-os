@@ -68,7 +68,7 @@ export function Chart({
           y1={PAD + usable}
           x2={WIDTH - PAD}
           y2={PAD + usable}
-          stroke="var(--bridge-border)"
+          stroke="var(--border)"
           strokeWidth={1}
           vectorEffect="non-scaling-stroke"
         />
@@ -84,20 +84,18 @@ export function Chart({
                 y={PAD + usable - height}
                 width={barWidth}
                 height={Math.max(height, point.value > 0 ? 1 : 0)}
-                fill="var(--bridge-accent)"
+                fill="var(--chart-1)"
                 opacity={0.85}
               />
             );
           })
         ) : (
           <>
-            {chartType === "area" && (
-              <polygon points={area} fill="var(--bridge-accent)" opacity={0.14} />
-            )}
+            {chartType === "area" && <polygon points={area} fill="var(--chart-1)" opacity={0.14} />}
             <polyline
               points={line}
               fill="none"
-              stroke="var(--bridge-accent)"
+              stroke="var(--chart-1)"
               strokeWidth={1.5}
               strokeLinejoin="round"
               strokeLinecap="round"

@@ -30,8 +30,9 @@ export const personalAssistantTemplate: Template = TemplateSchema.parse({
         name: "assistant",
         description: "Primary assistant and orchestrator.",
         instructions:
-          "You are the user's personal assistant. Manage their tasks, answer questions, and delegate research to the researcher agent when a question needs depth.",
-        tools: ["web-search"],
+          "You are the user's personal assistant. Manage their tasks, answer questions, and delegate research to the researcher agent when a question needs depth. " +
+          "You can work with files: read, search, write and edit them. Prefer editing an exact fragment over rewriting a whole file, and say what you changed.",
+        tools: ["web-search", "filesystem"],
         canDelegateTo: ["researcher"],
       },
       {
@@ -44,11 +45,27 @@ export const personalAssistantTemplate: Template = TemplateSchema.parse({
       },
     ],
     entryAgent: "assistant",
-    tools: [{ name: "web-search", kind: "native" }],
+    tools: [
+      { name: "web-search", kind: "native" },
+      { name: "filesystem", kind: "native" },
+    ],
     memory: { longTerm: true },
     permissions: {
       default: "ask",
-      rules: [{ resource: "tool:web-search", actions: "*", effect: "allow" }],
+      rules: [
+        { resource: "tool:web-search", actions: "*", effect: "allow" },
+        /**
+         * Looking is free; changing is not. Reads and searches inside the
+         * agent's own workspace run without interrupting anyone, while
+         * writing, deleting, and anything reaching outside that workspace
+         * fall through to the default and ask first.
+         */
+        {
+          resource: "tool:filesystem",
+          actions: ["read", "list", "glob", "grep", "mkdir"],
+          effect: "allow",
+        },
+      ],
     },
     triggers: {
       schedules: [

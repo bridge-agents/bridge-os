@@ -15,6 +15,10 @@ export interface AgentPlan {
   model: ModelRef;
   tools: ToolGrant[];
   canDelegateTo: string[];
+  memory?: { working: boolean; longTerm: boolean };
+  secrets?: string[];
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+  serviceTier?: "default" | "fast";
 }
 
 export interface RuntimePlan {
@@ -29,8 +33,14 @@ export interface RuntimePlan {
     dailyTokenBudget?: number;
     dailySpendUsd?: number;
   };
-  sandbox: { network: "none" | "restricted" | "full"; filesystem: "none" | "workspace" | "full" };
+  sandbox: {
+    network: "none" | "restricted" | "full";
+    filesystem: "none" | "workspace" | "full";
+    /** Directories outside the agent's own workspace it may also work in. */
+    allowedPaths: string[];
+  };
   deployment: { target: string; background: boolean };
+  memory?: { longTerm: boolean; knowledge: boolean };
 }
 
 export function compile(manifest: Manifest): RuntimePlan {
@@ -62,6 +72,8 @@ export function compile(manifest: Manifest): RuntimePlan {
         return [grant];
       }),
       canDelegateTo: agent.canDelegateTo,
+      memory: agent.memory,
+      secrets: agent.secrets,
     };
   }
 
@@ -80,6 +92,7 @@ export function compile(manifest: Manifest): RuntimePlan {
     limits: manifest.runtime.limits,
     sandbox: manifest.runtime.sandbox,
     deployment: manifest.deployment,
+    memory: manifest.memory,
   };
 }
 

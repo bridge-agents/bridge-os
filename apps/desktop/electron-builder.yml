@@ -1,0 +1,75 @@
+appId: com.bridgeagentos.bridge
+productName: Bridge
+copyright: Bridge
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the bundled main process ships as app code; everything the runtime
+# needs is an extra resource, because it is run as a separate process rather
+# than imported.
+files:
+  - dist/**
+  - package.json
+  - "!**/*.map"
+
+extraResources:
+  # The API bundle and its migrations, plus the one dependency that cannot be
+  # bundled: PGlite loads its own WebAssembly relative to itself. It has no
+  # dependencies of its own, which is what makes copying the directory safe —
+  # pnpm's node_modules is a symlink tree that does not survive being copied.
+  - from: ../api/dist
+    to: api
+  - from: ../api/node_modules/@electric-sql/pglite
+    to: api/node_modules/@electric-sql/pglite
+  # The built web client, served by the API so the app is one process.
+  - from: ../web/dist
+    to: web
+  - from: build
+    to: desktop/build
+
+# Where updates come from. Unset until Bridge has a release host; the app
+# checks only when packaged and treats a failure as "no update".
+publish:
+  provider: generic
+  url: https://updates.bridge.dev/desktop
+  channel: latest
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Required before notarisation; harmless without it.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  contents:
+    - x: 140
+      y: 200
+    - x: 400
+      y: 200
+      type: link
+      path: /Applications
+
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  category: Development
+  target:
+    - AppImage
+    - deb

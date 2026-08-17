@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "build": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
@@ -18,14 +19,17 @@
     "@bridge/runtime": "workspace:*",
     "@bridge/sdk": "workspace:*",
     "@bridge/spec": "workspace:*",
+    "@electric-sql/pglite": "^0.5.4",
     "@hono/node-server": "^1.14.0",
     "drizzle-orm": "^0.44.0",
     "hono": "^4.7.0",
+    "openid-client": "^6.8.1",
+    "pino": "^9.6.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "pino": "^9.6.0",
+    "esbuild": "^0.25.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

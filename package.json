@@ -14,7 +14,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=@bridge/api --filter=@bridge/web --filter=@bridge/worker",
     "db:generate": "pnpm --filter @bridge/db generate",
     "db:migrate": "pnpm --filter @bridge/db migrate",
     "infra:up": "docker compose up -d",
@@ -27,6 +27,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller",
       "esbuild",
       "msgpackr-extract"
     ]

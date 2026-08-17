@@ -16,6 +16,32 @@ export interface AppDeps {
    * for server and Cloud deployments, where auth works normally.
    */
   localUserId?: string;
+  /** Durable application data root for uploads and local agent workspaces. */
+  dataDir?: string;
+  /**
+   * Built web client to serve from this process. Set by installed builds so
+   * the desktop app runs one process; unset in development, where Vite hosts
+   * the client and proxies here.
+   */
+  webDir?: string;
+  /** Optional hosted mail delivery; Community returns a shareable invite token instead. */
+  sendWorkspaceInvitation?: (invitation: {
+    email: string;
+    workspaceName: string;
+    invitedBy: string;
+    token: string;
+    expiresAt: Date;
+  }) => Promise<void>;
+  /** Available only when this process owns the local master key. */
+  rotateSecretKey?: () => Promise<{ rotatedSecrets: number; storage: string; warning?: string }>;
+  oidc?: {
+    name: string;
+    issuer: string;
+    clientId: string;
+    clientSecret?: string;
+    redirectUri: string;
+    allowedEmailDomains?: string[];
+  };
 }
 
 export type WorkspaceRole = "owner" | "admin" | "member";

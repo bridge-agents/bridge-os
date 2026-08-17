@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CliError } from "./client.js";
+import { CliError, isLoopback } from "./client.js";
 
 /**
  * Starting Bridge is one command, not three.
@@ -18,15 +18,6 @@ const repoRoot = join(here, "..", "..", "..");
 const tsx = join(here, "..", "node_modules", "tsx", "dist", "cli.mjs");
 
 export const WEB_URL = "http://localhost:3000";
-
-function isLoopback(url: string): boolean {
-  try {
-    const { hostname } = new URL(url);
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  } catch {
-    return false;
-  }
-}
 
 async function reachable(url: string): Promise<boolean> {
   try {
@@ -95,8 +86,15 @@ export async function ensureApi({ apiUrl, out }: ServeOptions): Promise<void> {
   }
 }
 
-/** Same, for the web app that serves the dashboard. */
-export async function ensureWeb(out: (line: string) => void): Promise<string> {
+/**
+ * Where the dashboard lives.
+ *
+ * If the API is serving a built web client — which is what an installed
+ * Bridge does — that is the dashboard, and there is nothing else to start.
+ * Only a source checkout with no build falls back to the Vite dev server.
+ */
+export async function ensureWeb(apiUrl: string, out: (line: string) => void): Promise<string> {
+  if (await servesWebClient(apiUrl)) return apiUrl;
   if (await reachable(WEB_URL)) return WEB_URL;
 
   const web = join(repoRoot, "apps", "web");
@@ -106,13 +104,34 @@ export async function ensureWeb(out: (line: string) => void): Promise<string> {
   }
 
   out("Starting the dashboard…");
-  const child = spawn(vite, [], { cwd: web, detached: true, stdio: "ignore" });
+  /**
+   * The dev server proxies to whichever API we actually started. Without
+   * this it falls back to its own default port, so a Bridge running anywhere
+   * else — and an installed one takes whatever port is free — is served a
+   * dashboard wired to nothing, or worse, to somebody else's process.
+   */
+  const child = spawn(vite, [], {
+    cwd: web,
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, BRIDGE_API_URL: apiUrl },
+  });
   child.unref();
 
   if (!(await waitFor(WEB_URL, 60_000))) {
     throw new CliError("The dashboard did not start. Run `pnpm dev` from the project root.");
   }
   return WEB_URL;
+}
+
+/** The API answers `/` with the app shell only when it was built with one. */
+async function servesWebClient(apiUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(apiUrl, { signal: AbortSignal.timeout(1500) });
+    return res.ok && (res.headers.get("content-type") ?? "").includes("text/html");
+  } catch {
+    return false;
+  }
 }
 
 /** Open a URL in the user's browser, best effort — never fatal. */

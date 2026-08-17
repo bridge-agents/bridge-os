@@ -1,16 +1,70 @@
+import {
+  Braces,
+  Cloud,
+  History,
+  Laptop,
+  Loader2,
+  MessageSquareText,
+  Play,
+  Save,
+  Server,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { AgentArtwork } from "../AgentArtwork.jsx";
 import { api, BridgeApiError, type Manifest, type RunDetail, type RunSummary } from "../api.js";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../components/ui/alert-dialog.js";
+import { Badge } from "../components/ui/badge.js";
+import { Button } from "../components/ui/button.js";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card.js";
+import { Separator } from "../components/ui/separator.js";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "../components/ui/sheet.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs.js";
+import { Textarea } from "../components/ui/textarea.js";
+import { NavArtwork } from "../NavArtwork.jsx";
 import { useWorkspaceId } from "../session.jsx";
-import { Button, Card, EmptyState, ErrorText, Field, Input, Spinner } from "../ui.jsx";
+import { EmptyState, ErrorText, Field, Input, Spinner } from "../ui.jsx";
 
-const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
+const TERMINAL = new Set(["succeeded", "failed", "cancelled", "limit_reached", "refused"]);
+
+const statusStyle = (status: string) => {
+  if (status === "succeeded" || status === "deployed")
+    return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
+  if (status === "failed" || status === "cancelled") return "bg-destructive/10 text-destructive";
+  if (status === "running" || status === "queued")
+    return "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300";
+  return "bg-secondary text-secondary-foreground";
+};
 
 export function AgentDetail() {
   const workspaceId = useWorkspaceId();
   const { agentId = "" } = useParams();
   const navigate = useNavigate();
-
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [status, setStatus] = useState("draft");
   const [draft, setDraft] = useState("");
@@ -39,7 +93,6 @@ export function AgentDetail() {
     void load();
   }, [load]);
 
-  // While anything is in flight, poll so the user watches it progress.
   useEffect(() => {
     if (!runsList.some((run) => !TERMINAL.has(run.status))) return;
     const interval = setInterval(() => {
@@ -55,11 +108,11 @@ export function AgentDetail() {
     setNotice(null);
     try {
       await action();
-    } catch (err) {
-      if (err instanceof BridgeApiError) {
-        setError(err.error.message);
-        setIssues(err.error.details ?? []);
-      } else if (err instanceof SyntaxError) setError("That is not valid JSON.");
+    } catch (cause) {
+      if (cause instanceof BridgeApiError) {
+        setError(cause.error.message);
+        setIssues(cause.error.details ?? []);
+      } else if (cause instanceof SyntaxError) setError("That is not valid JSON.");
       else setError("Something went wrong.");
     } finally {
       setBusy(false);
@@ -72,7 +125,7 @@ export function AgentDetail() {
       setManifest(agent.manifest);
       setDraft(JSON.stringify(agent.manifest, null, 2));
       setProposal(null);
-      setNotice("Saved");
+      setNotice("Agent configuration saved.");
     });
 
   const startRun = (event: FormEvent) => {
@@ -86,23 +139,39 @@ export function AgentDetail() {
   };
 
   if (!manifest) return <Spinner label="Loading agent" />;
-
   const deployed = status === "deployed";
+  const DeploymentIcon =
+    manifest.deployment.target === "local"
+      ? Laptop
+      : manifest.deployment.target === "cloud"
+        ? Cloud
+        : Server;
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex w-full flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">{manifest.meta.name}</h2>
-          <p className="font-mono text-xs text-text-faint">
-            {manifest.meta.slug} · {status}
-          </p>
+        <div className="flex min-w-0 items-center gap-3">
+          <AgentArtwork group={manifest.agents.length > 1} className="size-11" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-xl font-semibold">{manifest.meta.name}</h2>
+              <Badge variant="outline" className={statusStyle(status)}>
+                {status}
+              </Badge>
+            </div>
+            <p className="truncate font-mono text-xs text-muted-foreground">{manifest.meta.slug}</p>
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {deployed && (
+            <Button variant="outline" onClick={() => navigate(`/chat?agent=${agentId}`)}>
+              <MessageSquareText /> Open chat
+            </Button>
+          )}
           <Button
-            variant="ghost"
+            variant={deployed ? "outline" : "default"}
             onClick={() =>
-              guard(async () => {
+              void guard(async () => {
                 const { agent } = deployed
                   ? await api.stopAgent(workspaceId, agentId)
                   : await api.deployAgent(workspaceId, agentId);
@@ -111,234 +180,304 @@ export function AgentDetail() {
             }
             disabled={busy}
           >
+            {deployed ? <Square /> : <Play />}
             {deployed ? "Stop" : "Deploy"}
           </Button>
-          <Button
-            variant="danger"
-            onClick={() =>
-              guard(async () => {
-                await api.deleteAgent(workspaceId, agentId);
-                navigate("/agents");
-              })
-            }
-          >
-            Delete
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive">
+                <Trash2 /> Delete
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {manifest.meta.name}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This removes the agent, its manifest, and access to its run history. This action
+                  cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() =>
+                    void guard(async () => {
+                      await api.deleteAgent(workspaceId, agentId);
+                      navigate("/agents");
+                    })
+                  }
+                >
+                  Delete agent
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
       <ErrorText>{error}</ErrorText>
       {issues.length > 0 && (
-        <ul className="flex flex-col gap-1 rounded-[var(--radius-sm)] border border-danger/40 bg-danger/5 p-3">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
           {issues.map((issue) => (
-            <li key={`${issue.path}:${issue.message}`} className="font-mono text-xs text-danger">
+            <p
+              key={`${issue.path}:${issue.message}`}
+              className="font-mono text-xs text-destructive"
+            >
               {issue.path || "(root)"}: {issue.message}
-            </li>
+            </p>
           ))}
-        </ul>
+        </div>
       )}
-      {notice && <p className="text-xs text-success">{notice}</p>}
+      {notice && <p className="text-sm text-emerald-700 dark:text-emerald-300">{notice}</p>}
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card>
-          <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
-            Runs on
-          </p>
-          <p className="text-sm font-medium">
-            {manifest.deployment.target === "local"
-              ? "This device"
-              : manifest.deployment.target === "cloud"
-                ? "Bridge Cloud"
-                : "Self-hosted server"}
-          </p>
+        <Card className="rounded-lg">
+          <CardContent className="flex items-center gap-3 py-1">
+            <DeploymentIcon className="size-5 text-primary" />
+            <div>
+              <p className="font-medium">
+                {manifest.deployment.target === "local"
+                  ? "This device"
+                  : manifest.deployment.target === "cloud"
+                    ? "Bridge Cloud"
+                    : "Self-hosted"}
+              </p>
+              <p className="text-xs text-muted-foreground">Deployment target</p>
+            </div>
+          </CardContent>
         </Card>
-        <Card>
-          <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
-            Agents
-          </p>
-          <p className="text-sm font-medium">{manifest.agents.length}</p>
+        <Card className="rounded-lg">
+          <CardContent className="flex items-center gap-3 py-1">
+            <NavArtwork name="subagent" className="size-7" />
+            <div>
+              <p className="font-medium">{manifest.agents.length}</p>
+              <p className="text-xs text-muted-foreground">Configured agents</p>
+            </div>
+          </CardContent>
         </Card>
-        <Card>
-          <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
-            Background
-          </p>
-          <p className="text-sm font-medium">
-            {manifest.deployment.background ? "Keeps running" : "Only while Bridge is open"}
-          </p>
+        <Card className="rounded-lg">
+          <CardContent className="flex items-center gap-3 py-1">
+            <History className="size-5 text-amber-600 dark:text-amber-400" />
+            <div>
+              <p className="font-medium">{runsList.length}</p>
+              <p className="text-xs text-muted-foreground">Recorded runs</p>
+            </div>
+          </CardContent>
         </Card>
       </div>
 
-      <section className="flex flex-col gap-3">
-        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
-          Give it a task
-        </h3>
-        <form onSubmit={startRun} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1">
-            <Field label="Task">
-              {(id) => (
-                <Input
-                  id={id}
-                  value={task}
-                  onChange={(e) => setTask(e.target.value)}
-                  placeholder="Summarize today's priorities"
-                />
-              )}
-            </Field>
-          </div>
-          <Button type="submit" disabled={busy || !task.trim()}>
-            Run
-          </Button>
-        </form>
-        {!deployed && (
-          <p className="text-xs text-text-muted">Deploy the agent before sending it work.</p>
-        )}
-      </section>
+      <Tabs defaultValue="overview" className="w-full">
+        <TabsList>
+          <TabsTrigger value="overview">
+            <Play /> Overview
+          </TabsTrigger>
+          <TabsTrigger value="runs">
+            <History /> Runs
+          </TabsTrigger>
+          <TabsTrigger value="configure">
+            <Braces /> Configure
+          </TabsTrigger>
+        </TabsList>
 
-      <section className="flex flex-col gap-3">
-        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
-          Runs
-        </h3>
-        {runsList.length === 0 ? (
-          <EmptyState title="No runs yet">Send the agent a task above.</EmptyState>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {runsList.map((run) => (
-              <li key={run.id}>
-                <button
-                  type="button"
-                  onClick={() => guard(async () => setOpenRun(await api.run(workspaceId, run.id)))}
-                  className="flex w-full items-center justify-between rounded-[var(--radius-md)] border border-border bg-bg-raised px-4 py-3 text-left transition hover:border-border-strong"
-                >
-                  <span className="flex flex-col">
-                    <span className="font-mono text-xs text-text-faint">{run.id}</span>
-                    <span className="text-xs text-text-muted">
+        <TabsContent value="overview" className="pt-4">
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>Run a task</CardTitle>
+              <CardDescription>
+                Send a one-off task or use Chat for a persistent conversation.
+              </CardDescription>
+              <CardAction>{!deployed && <Badge variant="outline">Deploy first</Badge>}</CardAction>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={startRun} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <Field label="Task">
+                    {(id) => (
+                      <Input
+                        id={id}
+                        value={task}
+                        onChange={(event) => setTask(event.target.value)}
+                        placeholder="Summarize today's priorities"
+                      />
+                    )}
+                  </Field>
+                </div>
+                <Button type="submit" disabled={busy || !task.trim() || !deployed}>
+                  {busy ? <Loader2 className="animate-spin" /> : <Play />} Run task
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="runs" className="pt-4">
+          {runsList.length === 0 ? (
+            <EmptyState title="No runs yet">
+              Run a task from Overview or start a conversation in Chat.
+            </EmptyState>
+          ) : (
+            <Card className="rounded-lg p-0 py-0">
+              <div className="divide-y">
+                {runsList.map((run) => (
+                  <Button
+                    key={run.id}
+                    type="button"
+                    variant="ghost"
+                    onClick={() =>
+                      void guard(async () => setOpenRun(await api.run(workspaceId, run.id)))
+                    }
+                    className="grid h-auto w-full rounded-none p-4 text-left transition hover:bg-muted/40 sm:grid-cols-[minmax(12rem,1fr)_auto_auto] sm:items-center"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono text-xs">{run.id}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {new Date(run.queuedAt).toLocaleString()}
+                      </span>
+                    </span>
+                    <span className="text-xs text-muted-foreground">
                       {run.inputTokens + run.outputTokens} tokens
                       {run.costUsd ? ` · $${Number(run.costUsd).toFixed(4)}` : ""}
                     </span>
-                  </span>
-                  <span
-                    className={`font-mono text-xs ${
-                      run.status === "succeeded"
-                        ? "text-success"
-                        : run.status === "failed"
-                          ? "text-danger"
-                          : "text-text-muted"
-                    }`}
-                  >
-                    {run.status}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                    <Badge variant="outline" className={statusStyle(run.status)}>
+                      {run.status}
+                    </Badge>
+                  </Button>
+                ))}
+              </div>
+            </Card>
+          )}
+        </TabsContent>
 
-        {openRun && (
-          <Card className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="font-mono text-xs text-text-faint">{openRun.run.id}</p>
-              <Button variant="ghost" onClick={() => setOpenRun(null)}>
-                Close
-              </Button>
-            </div>
-            {openRun.run.output?.content && (
-              <p className="whitespace-pre-wrap text-sm">{openRun.run.output.content}</p>
-            )}
-            {openRun.run.error && <ErrorText>{openRun.run.error}</ErrorText>}
-            <ol className="flex flex-col gap-2">
-              {openRun.steps.map((step) => (
-                <li
-                  key={step.id}
-                  className="rounded-[var(--radius-sm)] border border-border bg-bg p-3"
+        <TabsContent value="configure" className="space-y-4 pt-4">
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>Change with plain language</CardTitle>
+              <CardDescription>
+                Bridge drafts a revised manifest. Nothing changes until you accept it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex-1">
+                  <Field label="Instruction">
+                    {(id) => (
+                      <Input
+                        id={id}
+                        value={instruction}
+                        onChange={(event) => setInstruction(event.target.value)}
+                        placeholder="Add a research subagent and ask before sending email"
+                      />
+                    )}
+                  </Field>
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={busy || !instruction.trim()}
+                  onClick={() =>
+                    void guard(async () => {
+                      const { manifest: next } = await api.editAgent(
+                        workspaceId,
+                        agentId,
+                        instruction.trim(),
+                      );
+                      setProposal(next);
+                    })
+                  }
                 >
-                  <p className="font-mono text-[11px] text-text-muted">
-                    {step.seq}. {step.type}
-                    {step.agentName ? ` · ${step.agentName}` : ""}
-                  </p>
-                  <pre className="mt-1 overflow-x-auto font-mono text-[11px] text-text-faint">
-                    {JSON.stringify(step.data, null, 2)}
-                  </pre>
-                </li>
-              ))}
-            </ol>
-          </Card>
-        )}
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
-          Change it in plain language
-        </h3>
-        <Card className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <Field
-                label="Instruction"
-                hint="Bridge proposes a change; nothing is saved until you accept it."
-              >
-                {(id) => (
-                  <Input
-                    id={id}
-                    value={instruction}
-                    onChange={(e) => setInstruction(e.target.value)}
-                    placeholder="Add a research subagent and require approval before emails"
-                  />
-                )}
-              </Field>
-            </div>
-            <Button
-              variant="ghost"
-              disabled={busy || !instruction.trim()}
-              onClick={() =>
-                guard(async () => {
-                  const { manifest: next } = await api.editAgent(
-                    workspaceId,
-                    agentId,
-                    instruction.trim(),
-                  );
-                  setProposal(next);
-                })
-              }
-            >
-              {busy ? "Thinking…" : "Propose"}
-            </Button>
-          </div>
-
-          {proposal && (
-            <div className="flex flex-col gap-2">
-              <p className="font-condensed text-[11px] font-semibold uppercase tracking-[0.1em] text-text-faint">
-                Proposed manifest
-              </p>
-              <pre className="max-h-72 overflow-auto rounded-[var(--radius-sm)] border border-border bg-bg p-3 font-mono text-[11px]">
-                {JSON.stringify(proposal, null, 2)}
-              </pre>
-              <div className="flex gap-2">
-                <Button onClick={() => save(proposal)}>Accept and save</Button>
-                <Button variant="ghost" onClick={() => setProposal(null)}>
-                  Discard
+                  <NavArtwork name="generating" className="size-4" />
+                  {busy ? "Thinking" : "Propose change"}
                 </Button>
               </div>
-            </div>
-          )}
-        </Card>
-      </section>
+              {proposal && (
+                <div className="space-y-3">
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Proposed manifest</p>
+                    <Badge>Preview</Badge>
+                  </div>
+                  <pre className="max-h-80 overflow-auto rounded-lg border bg-muted/40 p-4 font-mono text-xs">
+                    {JSON.stringify(proposal, null, 2)}
+                  </pre>
+                  <div className="flex gap-2">
+                    <Button onClick={() => void save(proposal)}>
+                      <Save /> Accept and save
+                    </Button>
+                    <Button variant="outline" onClick={() => setProposal(null)}>
+                      Discard
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-      <section className="flex flex-col gap-2">
-        <h3 className="font-condensed text-[13px] font-semibold uppercase tracking-[0.1em] text-text">
-          Manifest
-        </h3>
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          spellCheck={false}
-          className="h-96 w-full resize-y rounded-[var(--radius-md)] border border-border bg-bg-raised p-4 font-mono text-xs leading-relaxed text-text outline-none focus:border-border-strong"
-        />
-        <div>
-          <Button onClick={() => save(JSON.parse(draft))} disabled={busy}>
-            {busy ? "Saving…" : "Save manifest"}
-          </Button>
-        </div>
-      </section>
+          <Card className="rounded-lg">
+            <CardHeader>
+              <CardTitle>Manifest editor</CardTitle>
+              <CardDescription>
+                Direct JSON editing for the complete agent specification.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                spellCheck={false}
+                className="min-h-96 resize-y font-mono text-xs leading-relaxed"
+              />
+              <Button onClick={() => void save(JSON.parse(draft))} disabled={busy}>
+                <Save /> {busy ? "Saving" : "Save manifest"}
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <Sheet open={Boolean(openRun)} onOpenChange={(open) => !open && setOpenRun(null)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+          {openRun && (
+            <>
+              <SheetHeader>
+                <SheetTitle>Run details</SheetTitle>
+                <SheetDescription className="break-all font-mono">
+                  {openRun.run.id}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-5 px-4 pb-6">
+                <Badge variant="outline" className={statusStyle(openRun.run.status)}>
+                  {openRun.run.status}
+                </Badge>
+                {openRun.run.output?.content && (
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Output</p>
+                    <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm">
+                      {openRun.run.output.content}
+                    </p>
+                  </div>
+                )}
+                {openRun.run.error && <ErrorText>{openRun.run.error}</ErrorText>}
+                <div>
+                  <p className="mb-2 text-sm font-medium">Execution steps</p>
+                  <ol className="space-y-2">
+                    {openRun.steps.map((step) => (
+                      <li key={step.id} className="rounded-lg border p-3">
+                        <p className="text-xs font-medium">
+                          {step.seq}. {step.type}
+                          {step.agentName ? ` · ${step.agentName}` : ""}
+                        </p>
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+                          {JSON.stringify(step.data, null, 2)}
+                        </pre>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

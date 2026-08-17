@@ -21,6 +21,7 @@ export interface SecretStore {
   list(workspaceId: string): Promise<SecretRef[]>;
   /** Plaintext. Callers must not log, return, or persist the result. */
   reveal(workspaceId: string, secretId: string): Promise<string | undefined>;
+  revealNamed(workspaceId: string, name: string): Promise<string | undefined>;
   delete(workspaceId: string, secretId: string): Promise<boolean>;
 }
 
@@ -65,6 +66,14 @@ export class EncryptedDbSecretStore implements SecretStore {
     return row ? decryptSecret(row.ciphertext, this.key) : undefined;
   }
 
+  async revealNamed(workspaceId: string, name: string): Promise<string | undefined> {
+    const [row] = await this.db
+      .select({ ciphertext: secrets.ciphertext })
+      .from(secrets)
+      .where(and(eq(secrets.name, name), eq(secrets.workspaceId, workspaceId)));
+    return row ? decryptSecret(row.ciphertext, this.key) : undefined;
+  }
+
   async delete(workspaceId: string, secretId: string): Promise<boolean> {
     const deleted = await this.db
       .delete(secrets)
@@ -72,4 +81,23 @@ export class EncryptedDbSecretStore implements SecretStore {
       .returning({ id: secrets.id });
     return deleted.length > 0;
   }
+}
+
+/** Re-encrypt every credential in one transaction before changing the master key. */
+export async function rotateEncryptedSecrets(
+  db: Db,
+  currentKey: Buffer,
+  nextKey: Buffer,
+): Promise<number> {
+  const rows = await db.select({ id: secrets.id, ciphertext: secrets.ciphertext }).from(secrets);
+  const rotated = rows.map((row) => ({
+    id: row.id,
+    ciphertext: encryptSecret(decryptSecret(row.ciphertext, currentKey), nextKey),
+  }));
+  await db.transaction(async (tx) => {
+    for (const row of rotated) {
+      await tx.update(secrets).set({ ciphertext: row.ciphertext }).where(eq(secrets.id, row.id));
+    }
+  });
+  return rotated.length;
 }

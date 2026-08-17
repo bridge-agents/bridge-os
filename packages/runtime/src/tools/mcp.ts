@@ -178,18 +178,78 @@ export class McpClient {
     const result = (await this.transport.request("tools/call", {
       name,
       arguments: args,
-    })) as { content?: { type: string; text?: string }[]; isError?: boolean };
+    })) as {
+      content?: {
+        type: string;
+        text?: string;
+        data?: string;
+        mimeType?: string;
+        resource?: { blob?: string; mimeType?: string; uri?: string };
+      }[];
+      isError?: boolean;
+    };
 
-    const text = (result?.content ?? [])
-      .map((part) => (part.type === "text" ? (part.text ?? "") : `[${part.type}]`))
+    const content = result?.content ?? [];
+    const artifacts = content.flatMap((part, index) => {
+      if (part.type === "image" && part.data) {
+        return [
+          {
+            name: `generated-image-${index + 1}.${extensionForMime(part.mimeType)}`,
+            mimeType: part.mimeType ?? "image/png",
+            dataBase64: part.data,
+          },
+        ];
+      }
+      if (part.type === "resource" && part.resource?.blob) {
+        return [
+          {
+            name: filenameFromUri(part.resource.uri) ?? `generated-file-${index + 1}`,
+            mimeType: part.resource.mimeType ?? "application/octet-stream",
+            dataBase64: part.resource.blob,
+          },
+        ];
+      }
+      return [];
+    });
+    const text = content
+      .map((part) =>
+        part.type === "text"
+          ? (part.text ?? "")
+          : part.type === "image" || part.type === "resource"
+            ? `[Generated ${part.type} attached]`
+            : `[${part.type}]`,
+      )
       .join("\n");
 
-    return { ok: !result?.isError, output: text, error: result?.isError ? text : undefined };
+    return {
+      ok: !result?.isError,
+      output: text,
+      error: result?.isError ? text : undefined,
+      ...(artifacts.length ? { artifacts } : {}),
+    };
   }
 
   close(): Promise<void> {
     return this.transport.close();
   }
+}
+
+function extensionForMime(mimeType?: string): string {
+  return (
+    {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/webp": "webp",
+      "image/gif": "gif",
+      "image/svg+xml": "svg",
+    }[mimeType ?? ""] ?? "bin"
+  );
+}
+
+function filenameFromUri(uri?: string): string | undefined {
+  if (!uri) return undefined;
+  const value = uri.split(/[\\/]/).pop()?.trim();
+  return value || undefined;
 }
 
 export function createTransport(config: McpServerConfig): McpTransport {

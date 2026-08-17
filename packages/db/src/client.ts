@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -23,7 +24,19 @@ export interface DbHandle {
   close(): Promise<void>;
 }
 
-const MIGRATIONS_FOLDER = fileURLToPath(new URL("../migrations", import.meta.url));
+/**
+ * Migrations are read from disk at runtime, so a packaged build has to say
+ * where they went: bundling collapses this module into one file and
+ * `../migrations` no longer points anywhere real. A build that copies the
+ * folder next to its bundle is found automatically; the env var is the
+ * escape hatch for anything laid out differently.
+ */
+const bundledMigrations = fileURLToPath(new URL("./migrations", import.meta.url));
+const MIGRATIONS_FOLDER =
+  process.env.BRIDGE_MIGRATIONS_DIR ??
+  (existsSync(bundledMigrations)
+    ? bundledMigrations
+    : fileURLToPath(new URL("../migrations", import.meta.url)));
 
 export function isEmbeddedUrl(url: string): boolean {
   return url.startsWith("pglite:");

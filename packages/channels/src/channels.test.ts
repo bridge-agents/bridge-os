@@ -11,8 +11,10 @@ import type { Channel, InboundMessage, OutboundMessage } from "@bridge/sdk";
 import { personalAssistantTemplate, SPEC_VERSION } from "@bridge/spec";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ReliableChannel } from "./delivery.js";
 import { ChannelManager } from "./manager.js";
 import { ChannelRunner } from "./runner.js";
+import { SlackChannel } from "./slack.js";
 import { TelegramChannel } from "./telegram.js";
 
 let handle: DbHandle;
@@ -78,6 +80,32 @@ function runner(channel: Channel) {
     timeoutMs: 2_000,
   });
 }
+
+describe("ReliableChannel", () => {
+  it("retries transient delivery failures and serializes concurrent sends", async () => {
+    const delivered: string[] = [];
+    let attempts = 0;
+    const inner: Channel = {
+      type: "retrying",
+      async start() {},
+      async stop() {},
+      async send(message) {
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary rate limit");
+        delivered.push(message.text);
+      },
+    };
+    const channel = new ReliableChannel(inner, { minIntervalMs: 0, maxAttempts: 3 });
+
+    await Promise.all([
+      channel.send({ recipientId: "1", text: "first" }),
+      channel.send({ recipientId: "1", text: "second" }),
+    ]);
+
+    expect(attempts).toBe(3);
+    expect(delivered).toEqual(["first", "second"]);
+  });
+});
 
 describe("ChannelRunner", () => {
   it("turns an inbound message into a run and replies with its output", async () => {
@@ -238,6 +266,61 @@ describe("ChannelManager", () => {
     });
 
     await expect(manager.refresh()).resolves.toBeUndefined();
+  });
+});
+
+describe("SlackChannel", () => {
+  it("acks Socket Mode events and replies through chat.postMessage", async () => {
+    const sentFrames: string[] = [];
+    const listeners = new Map<string, ((event: { data?: string }) => void)[]>();
+    const socket = {
+      addEventListener(type: string, listener: (event: { data?: string }) => void) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+      },
+      send(value: string) {
+        sentFrames.push(value);
+      },
+      close() {},
+    } as unknown as WebSocket;
+    const calls: { url: string; body?: Record<string, unknown> }[] = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({
+        url,
+        body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined,
+      });
+      if (url.endsWith("apps.connections.open")) {
+        return Response.json({ ok: true, url: "wss://slack.test/socket" });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+
+    const inbound: InboundMessage[] = [];
+    const channel = new SlackChannel({
+      appToken: "xapp-test",
+      botToken: "xoxb-test",
+      fetchImpl,
+      socketFactory: () => socket,
+    });
+    await channel.start(async (message) => void inbound.push(message));
+
+    const message = JSON.stringify({
+      envelope_id: "env-1",
+      type: "events_api",
+      payload: { event: { type: "message", channel: "C123", text: "hello" } },
+    });
+    for (const listener of listeners.get("message") ?? []) listener({ data: message });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentFrames).toEqual([JSON.stringify({ envelope_id: "env-1" })]);
+    expect(inbound[0]).toMatchObject({ channel: "slack", senderId: "C123", text: "hello" });
+
+    await channel.send({ recipientId: "C123", text: "reply" });
+    expect(calls.at(-1)).toMatchObject({
+      url: "https://slack.com/api/chat.postMessage",
+      body: { channel: "C123", text: "reply" },
+    });
+    await channel.stop();
   });
 });
 

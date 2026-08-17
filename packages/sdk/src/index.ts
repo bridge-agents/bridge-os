@@ -7,6 +7,7 @@ export type {
   CompletionResult,
   DeltaHandler,
   MessageRole,
+  ModelAttachment,
   ModelInfo,
   Provider,
   ProviderToolDefinition,
@@ -14,4 +15,4 @@ export type {
   TokenUsage,
   ToolCall,
 } from "./provider.js";
-export type { BridgeTool, ToolAction, ToolContext, ToolResult } from "./tool.js";
+export type { BridgeTool, ToolAction, ToolArtifact, ToolContext, ToolResult } from "./tool.js";

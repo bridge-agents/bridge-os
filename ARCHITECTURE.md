@@ -63,7 +63,8 @@ Boundaries (explicit in the repository):
 | Control plane | `apps/api` | users, workspaces, agents, manifests, templates, integrations, secret references, deployments, permissions, dashboards, configuration |
 | Runtime / data plane | `@bridge/runtime`, hosted by `apps/worker` or by `apps/api` in embedded mode | model execution, agent loops, runs, tools, MCP, memory, schedules, channels, sandboxes |
 | Bridge Compiler | `@bridge/runtime` (`compile`) + `@bridge/spec` | intent/template/config → validated Manifest → runtime plan |
-| Client layer | `apps/web`, later CLI/desktop/mobile/channels | thin clients of the API; zero domain logic |
+| Client layer | `apps/web`, `apps/cli`, `apps/desktop`, `@bridge/channels` (mobile later) | thin clients of the API; zero domain logic |
+| Commands | `@bridge/commands` | one definition per user-facing verb, shared by every client |
 | Observability | typed events (`@bridge/spec/events`) + `events` table + structured logs | runs, traces, tasks, tool calls, tokens, costs, failures, approvals |
 | Contracts | `@bridge/spec`, `@bridge/sdk` | the only vocabulary shared across planes |
 
@@ -125,6 +126,10 @@ Nothing imports from apps/*.
 | Web | Vite + React SPA, Tailwind v4 + token CSS | ADR-0006 |
 | Adapters | `@bridge/sdk` interfaces (provider/tool/channel) | ADR-0007 |
 | Local desktop auth | One auto-provisioned owner, loopback only, no sign-in | ADR-0014 |
+| Desktop shell | Electron, supervising the API as a child of its own binary | ADR-0015 |
+| Master key at rest | OS credential store holds one key; credentials stay encrypted rows | ADR-0016 |
+| Schedules | Claimed from the database, not queue repeatables — no Redis on the desktop path | ADR-0010, ADR-0012 |
+| Commands | One catalogue in `@bridge/commands`, run by the CLI and the chat "/" palette | ADR-0005 |
 | Dashboard data | Closed source catalogue, resolved and aggregated server-side | `packages/spec/src/sources.ts` |
 | Deployment targets | `local` / `self-hosted` / `cloud`, one portable Manifest | ADR-0008 |
 | Secrets & crypto | `SecretStore` interface; Node stdlib crypto, no native deps | ADR-0011 |
@@ -144,8 +149,10 @@ with an implementation that requires nothing installed:
 |---|---|---|
 | Database | PGlite embedded in-process (`pglite:<path>`) | Postgres server (`postgres://…`) |
 | Queue | In-process `LocalQueue` | BullMQ on Redis |
-| Secrets | OS keychain (planned) / encrypted rows | Encrypted rows / KMS |
-| Lifecycle | Desktop app manages the runtime | Operator or Bridge Cloud |
+| Secrets | Encrypted rows; the key in the OS credential store | Encrypted rows / KMS |
+| Data location | OS application-data directory | Operator's choice |
+| Web client | Served by the API process | Served by the API or a CDN |
+| Lifecycle | The desktop app supervises the runtime | Operator or Bridge Cloud |
 
 The same schema, migrations, queries, API and runtime code serve all three.
 A Manifest carries `deployment: { target, background }` and nothing else that

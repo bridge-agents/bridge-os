@@ -19,6 +19,8 @@ export type RunEvent =
   | { type: "step"; runId: string; seq: number; step: Record<string, unknown> }
   | { type: "status"; runId: string; status: string };
 
+const WORK = "work";
+
 class RunBus {
   private readonly emitter = new EventEmitter();
 
@@ -36,6 +38,20 @@ class RunBus {
   subscribe(runId: string, handler: (event: RunEvent) => void): () => void {
     this.emitter.on(runId, handler);
     return () => this.emitter.off(runId, handler);
+  }
+
+  /**
+   * "There is work" — rung when a run is queued, so a runtime sharing this
+   * process starts on it now instead of at its next poll. Carries nothing:
+   * the queue in the database is the truth, this only says to go and look.
+   */
+  announceWork(): void {
+    this.emitter.emit(WORK);
+  }
+
+  onWork(handler: () => void): () => void {
+    this.emitter.on(WORK, handler);
+    return () => this.emitter.off(WORK, handler);
   }
 }
 
