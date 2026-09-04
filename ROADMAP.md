@@ -1,5 +1,16 @@
 # Bridge Agent OS — Roadmap
 
+> ### ⚠️ Phases 10–12 are superseded
+>
+> Bridge is pivoting to become a **control plane for agents from other
+> providers** rather than an agent platform of its own. The forward plan is
+> **[`docs/bridge-2.0/BRIDGE_2_ROADMAP.md`](docs/bridge-2.0/BRIDGE_2_ROADMAP.md)**.
+>
+> Phases 0–9 below are the **accurate history** of what is built and are kept
+> for that reason. Phase 10 (Bridge Optimizer) and Phase 11 (Bridge Cloud) are
+> **not the next work**; Phase 12 (Production Hardening) survives in spirit and
+> is folded into the 2.0 plan. Do not start Phase 10.
+
 Phases 0–8 are **complete**: architecture, foundation, accounts, the agent
 runtime, tools/permissions/approvals, chat/CLI/channels, dashboards, the
 desktop app, and automation. Phase 9 is next. Each phase lists
@@ -470,7 +481,7 @@ report of what was missed.
 
 ---
 
-## Phase 9 — Observability ← NEXT
+## Phase 9 — Observability ◐ PARTIALLY DELIVERED
 
 **Objective:** Users understand exactly what their autonomous system does.
 
@@ -490,9 +501,26 @@ completeness (every tool call in a run appears exactly once).
 **Risks:** event volume — partition/prune `events`; pricing drift — pricing
 tables as data with versioning.
 
+**Delivered:** `apps/api/src/activity.ts` (run list with keyset pagination,
+per-run trace, usage rollups, approval history, runtime health);
+`apps/web/src/routes/Activity.tsx` + `RunTrace.tsx`; cost golden tests per
+pricing row; trace-completeness tests. The acceptance criterion is met — for
+any run, "what did it do, what did it call, what did it cost, why did it fail"
+is two clicks.
+
+**Not delivered, and now inherited by Bridge 2.0:**
+
+- Per-agent activity view. `/activity/usage` returns `byAgent` and `daily`;
+  nothing renders them.
+- Approval-history UI. The endpoint exists; no page consumes it.
+- **`events` has no partitioning or pruning.** Unbounded today, and 2.0 writes
+  more to it, not less. This is Phase 0 of the 2.0 roadmap.
+- **Pricing tables are code, not versioned data.** A price change silently
+  rewrites the cost of historical runs.
+
 ---
 
-## Phase 10 — Bridge Optimizer (later)
+## Phase 10 — Bridge Optimizer (SUPERSEDED — see docs/bridge-2.0/)
 
 **Objective:** Bridge evaluates its own agent architectures.
 
@@ -514,7 +542,7 @@ validate; rollback integrity.
 
 ---
 
-## Phase 11 — Bridge Cloud (later)
+## Phase 11 — Bridge Cloud (DEFERRED — see docs/bridge-2.0/)
 
 **Objective:** Managed Bridge, same core.
 
@@ -534,7 +562,7 @@ exist in core (secrets driver, sandbox driver, auth driver).
 
 ---
 
-## Phase 12 — Production Hardening (pre-broad-release)
+## Phase 12 — Production Hardening (FOLDED INTO Bridge 2.0)
 
 Security review, sandbox hardening, permission review, tenant isolation
 tests, secret leakage tests, load/failure/migration/backup/recovery testing,

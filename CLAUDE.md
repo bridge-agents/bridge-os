@@ -3,7 +3,26 @@
 Guidance for Claude Code working in this repository. Read this before doing
 anything else here.
 
-## What this is
+## Read this first: Bridge is pivoting
+
+Bridge is becoming **the control plane for AI agents** — connecting, routing,
+monitoring and governing Claude Code, Codex, Hermes, Grok and local agents —
+rather than being an agent platform of its own.
+
+**The plan lives in [`docs/bridge-2.0/`](docs/bridge-2.0/) and no 2.0 code
+exists yet.** Everything in this repository is Bridge 1.0, which works.
+
+Before starting feature work, read
+[`docs/bridge-2.0/CODEBASE_AUDIT.md`](docs/bridge-2.0/CODEBASE_AUDIT.md) — it
+classifies every component KEEP / ADAPT / REBUILD / REMOVE / DEFER. Building
+on something marked REMOVE (the dashboard builder, the in-house agent
+templates) is wasted work. `ROADMAP.md` Phases 10–12 are superseded.
+
+Two things that are *not* yet approved to change: do not begin the frontend
+rebuild, and do not start deleting 1.0 functionality. Removal is the last
+phase of the migration, not the first.
+
+## What this is (Bridge 1.0, as built)
 
 **Bridge** is an Agent Operating System and agentic harness generator: the
 user describes the AI system they want, Bridge builds and runs the agentic
@@ -89,6 +108,15 @@ docs/architecture/  ADRs (numbered decision records — read before relitigating
   second source of truth. Edits go through `@bridge/spec`'s Zod schema
   (`parseManifest`/`safeParseManifest`); nothing writes an unvalidated
   manifest to the `agents` table.
+- **`specVersion` is 2.** A v1 manifest carried one `dashboard`; v2 carries
+  `dashboards[]`, and `migrations[1]` moves it across. When you change the
+  schema in a breaking way, ship a migration in the same commit — the
+  mechanism works and is tested, so there is no excuse for a manual fix-up.
+- **Dashboard layout is span and order, never coordinates.** A widget declares
+  `w` (1–4 columns) and `h`; position is array order. This is what makes the
+  document safe for both a drag and an AI rewrite. Empty sections are legal
+  (you add a page before its panels) but the *architect* rejects a model's
+  empty section — a model asked for a dashboard that returns a shell failed.
 - **One Postgres dialect, two drivers**: `postgres.js` for a real server,
   PGlite (WASM) embedded for desktop and tests. Same schema, same migrations
   (ADR-0009). **PGlite is a single connection** — querying the outer `db`
@@ -157,6 +185,12 @@ docs/architecture/  ADRs (numbered decision records — read before relitigating
   [`AGENTS.md`](AGENTS.md) — shadcn/ui only, assistant-ui for chat, no
   landing-page-style decoration in product routes. Read it before touching
   `apps/web`.
+- **There is no error boundary above a route by default — there is now one, and
+  it matters.** `RouteError.tsx` wraps the router inside `<main>`; without it
+  any render throw unmounts the sidebar too and the user gets a blank grey
+  window with no way to navigate. Do not remove it, and do not assume the API
+  sends every field the client expects: normalise optional fields at the API
+  boundary (`api.templates()` does this) rather than guarding at each use.
 - The desktop build bundles the API with esbuild (`apps/api/build.mjs`);
   pnpm's symlinked `node_modules` does not survive that bundling as-is for
   some packages (pglite, pino) — check the build script's `external` list

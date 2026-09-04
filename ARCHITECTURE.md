@@ -1,5 +1,12 @@
 # Bridge Agent OS — Architecture
 
+> **This describes Bridge 1.0 as built.** The proposed Bridge 2.0 architecture
+> — control plane → task orchestrator → agent router → agent adapter layer —
+> is in [`docs/bridge-2.0/BRIDGE_2_ARCHITECTURE.md`](docs/bridge-2.0/BRIDGE_2_ARCHITECTURE.md),
+> together with an audit classifying every component below as KEEP / ADAPT /
+> REBUILD / REMOVE / DEFER. Most of what follows survives the pivot; the agent
+> loop, the Manifest's execution fields, and the dashboard builder do not.
+
 Status: Phases 0–4 complete (foundation, accounts, runtime, tools and
 approvals). Decisions recorded in `docs/architecture/ADR-*.md`.
 
@@ -182,7 +189,11 @@ source of truth; TS types are inferred. Key design points:
   `runtime.limits` (concurrency, run seconds, token budget, daily spend) and
   `runtime.sandbox` (network/filesystem levels) exist in v1 so that later
   phases extend rather than restructure.
-- `dashboard` optionally embeds a Dashboard spec.
+- `dashboards[]` embeds zero or more Dashboard specs; the first is the one
+  that opens. (`specVersion` 2. A v1 manifest carried a single `dashboard`;
+  `migrations[1]` moves it into the list, so old stored manifests still load.)
+- `meta.icon` / `meta.color` carry the agent's face — an emoji or a small
+  downscaled data URL — so an exported agent still looks like itself.
 
 Templates = data: a partial Manifest + metadata, merged and validated through
 the same pipeline as blank or AI-generated agents.
@@ -194,8 +205,20 @@ Widgets are a Zod discriminated union (`metric`, `chart`, `taskList`,
 `agentStatus`, `activity`, `calendar`, `table`, `approvalQueue`, `chat`,
 `logs`, `text`, `embed`), each with a typed `data` binding. Theme is design
 tokens only (accent, background, appearance) — Bridge branding is not
-overridable. The renderer is Phase 6; the schema is stable now so templates
-and the AI editor target it from day one.
+overridable.
+
+Layout is **span and order, never coordinates**: a widget declares `w` (1–4
+columns) and `h`, and its position comes from where it sits in the array. That
+is what keeps the document safe for an AI to write and for a person to drag —
+there is no overlap to resolve and every valid document lays out. Sections may
+be empty, because someone building a dashboard by hand adds the page before
+the panels; the *architect* still rejects an empty section, since a model
+asked for a dashboard that returns a shell has failed at its job.
+
+Widgets bind to a closed catalogue of server-resolved sources
+(`@bridge/spec/sources`, served at `GET /v1/workspaces/:id/data`). A widget
+never decides what data it may read, and an unknown source renders as a
+labelled gap rather than a plausible zero.
 
 ## 6. Permissions and approvals
 

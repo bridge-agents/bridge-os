@@ -4,9 +4,21 @@
 user describes the AI system they want, Bridge builds the agentic
 infrastructure required to operate it.
 
+> ### ⚠️ Direction change in progress
+>
+> Bridge is pivoting from *being an agent* to **being the control plane for
+> agents** — connecting, routing, monitoring and governing Claude Code, Codex,
+> Hermes, Grok and local agents rather than competing with them.
+>
+> **Everything described below is Bridge 1.0 and works today.** The plan for
+> what replaces it is in **[`docs/bridge-2.0/`](docs/bridge-2.0/)**, and none
+> of it has been built yet. Read that folder before starting new feature work.
+
 > Docs: [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md) · [`ARCHITECTURE.md`](ARCHITECTURE.md) ·
 > [`ROADMAP.md`](ROADMAP.md) · [ADRs](docs/architecture/) ·
-> [`HANDOFF_TO_OPUS.md`](HANDOFF_TO_OPUS.md)
+> [**Bridge 2.0 plan**](docs/bridge-2.0/) ·
+> [`HANDOFF_TO_OPUS.md`](HANDOFF_TO_OPUS.md) · [`CLAUDE.md`](CLAUDE.md) ·
+> [`AGENTS.md`](AGENTS.md) (frontend rules)
 
 ## Install it
 
@@ -60,7 +72,14 @@ outside the agent's own workspace pauses the run and waits for you in the
 Approvals queue — nothing runs until you decide.
 
 Agents can also use HTTP, shell, search, and any MCP server, inside the same
-enforced sandbox.
+enforced sandbox. Settings has a catalog of 30+ ready-made connectors —
+GitHub, Slack, Notion, Stripe, Supabase, Linear and the rest — each one a
+token away; the ones that need OAuth Bridge doesn't have yet say so rather
+than pretending to work.
+
+If a workspace has an image-capable provider connected, every agent can draw
+— it's a capability, not a tool you grant, so there's no approval prompt for
+making a picture that touches nothing on disk.
 
 Give an agent a schedule and it runs on its own: a cron time in your own
 timezone ("weekdays at 9am" means 9am where you are), or an interval like
@@ -68,6 +87,17 @@ timezone ("weekdays at 9am" means 9am where you are), or an interval like
 Friday, or after five failures in a row — because an automation nobody stops
 is one you find out about from the bill. The Automations page shows what runs
 next and why anything stopped.
+
+Every agent remembers, but not by re-reading the transcript. Conversations
+are journalled cheaply as they happen; in the background, once enough has
+been said or things have gone quiet, Bridge re-reads that stretch, decides
+what's actually worth keeping, and folds it into a knowledge graph —
+merging into what it already knows rather than restating it. The Knowledge
+page shows that graph the way Obsidian shows a vault: click a point, see
+what it connects to. Every agent also keeps four files of its own —
+`IDENTITY.md`, `SOUL.md`, `USER.md`, `AGENTS.md` — generated from how you set
+it up and readable/editable by the agent itself, so "stop being so formal"
+is a change that survives instead of a thing you say once.
 
 Type `/` in any chat box to run Bridge commands without leaving the
 conversation — `/automations`, `/approve`, `/deploy`, `/usage`. They are the
@@ -96,9 +126,10 @@ bridge
 
 `bridge` starts Bridge if it isn't running, asks two questions the first time
 (which model provider, which model), creates and deploys a starter agent, and
-drops you into a conversation with it. Inside that conversation, `/help` lists
-what you can type — every Bridge command works there, the same ones the web
-chat box runs.
+drops you into a conversation with it. Type `/` and a live palette of commands
+appears under the cursor, narrowing as you keep typing — `/model` switches
+what you're talking to mid-conversation, and the terminal picks up wherever
+you last left off with an agent, the same thread the web app shows.
 
 Prefer a browser? `bridge dashboard` does the same and opens the dashboard. It finds a Bridge the desktop app
 started, too — whatever port that one happens to be on.
@@ -153,21 +184,21 @@ of model location — a locally running agent can still use hosted APIs.
 apps/
   api/       Control plane — Hono HTTP API (auth, workspaces, agents, runs, architect)
   worker/    Data plane — hosts the run executor for server deployments
-  web/       Web client — Vite + React SPA (chat, dashboards, agents, approvals)
-  cli/       `bridge` command line — same public API, bearer tokens
+  web/       Web client — Vite + React SPA (chat, dashboards, agents, approvals, settings)
+  cli/       `bridge` command line — same public API, bearer tokens, TUI chat
   desktop/   Electron shell — supervises the local runtime, tray, notifications
 packages/
   spec/      @bridge/spec      — Bridge Manifest, dashboard schema, permissions, events, templates
   sdk/       @bridge/sdk       — provider / tool / channel adapter interfaces
-  core/      @bridge/core      — ids, errors, env, logging, crypto
+  core/      @bridge/core      — ids, errors, env, logging, crypto, keychain
   db/        @bridge/db        — Drizzle schema, migrations, server + embedded drivers
   queue/     @bridge/queue     — JobQueue interface, BullMQ + in-process drivers
   providers/ @bridge/providers — Anthropic + OpenAI-compatible adapters, pricing
-  runtime/   @bridge/runtime   — compiler, agent loop, executor, tools, MCP, sandbox
+  runtime/   @bridge/runtime   — compiler, agent loop, executor, tools, MCP, sandbox, knowledge
   channels/  @bridge/channels  — Telegram + Discord adapters; inbound message → run
   commands/  @bridge/commands  — one command catalogue for the CLI and chat "/"
   ui/        @bridge/ui        — design tokens, brand assets
-docs/architecture/  ADRs
+docs/architecture/  ADRs (numbered decision records)
 ```
 
 ## Commands
@@ -212,5 +243,5 @@ own directory (resolved through symlinks, so links cannot escape), restricted
 network access rejects private and loopback addresses after a DNS lookup, and
 shell commands take an argument vector with a minimal environment. Destructive
 actions require an explicit permission rule or a human approval — a permissive
-default is never enough. Every domain table
-is workspace-scoped and cross-tenant access is covered by dedicated tests.
+default is never enough. Every domain table is workspace-scoped, and
+cross-tenant access is covered by dedicated tests.

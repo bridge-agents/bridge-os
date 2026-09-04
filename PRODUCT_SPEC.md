@@ -2,6 +2,22 @@
 
 > Public brand: **Bridge**. Formal product/repo name: **Bridge Agent OS**.
 
+> ### Status: superseded as product direction
+>
+> This document specifies **Bridge 1.0**, which is built and working. It is
+> accurate as a description of the current software and remains the reference
+> for every system described in it.
+>
+> It is **no longer the product direction.** Bridge is becoming a *control
+> plane for agents from other providers* rather than an agent platform of its
+> own. See [`docs/bridge-2.0/`](docs/bridge-2.0/) — in particular
+> [`BRIDGE_2_ARCHITECTURE.md`](docs/bridge-2.0/BRIDGE_2_ARCHITECTURE.md).
+>
+> Sections here describing the Agent Architect, the Manifest as an execution
+> spec, in-house agent templates, and the dashboard builder are the parts most
+> affected. The infrastructure sections — permissions, approvals, secrets,
+> runtime durability, events — carry forward largely intact.
+
 ## 1. What Bridge Is
 
 Bridge is an **Agent Operating System and agentic harness generator**.
