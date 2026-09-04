@@ -7,12 +7,14 @@ export const researchAgentTemplate: Template = TemplateSchema.parse({
   description: "Researches topics in depth and keeps a written knowledge base of what it learns.",
   category: "research",
   manifest: parseManifest({
-    specVersion: 1,
+    specVersion: 2,
     meta: {
       name: "Research Agent",
       slug: "research-agent",
       description: "Deep research with sourced summaries.",
       template: "research-agent",
+      icon: "🔬",
+      color: "#0E9F9F",
     },
     models: {
       default: { provider: "anthropic", model: "claude-sonnet-5" },
@@ -42,5 +44,27 @@ export const researchAgentTemplate: Template = TemplateSchema.parse({
         { resource: "tool:http", actions: ["read"], effect: "allow" },
       ],
     },
+    dashboards: [
+      {
+        version: 1,
+        id: "research",
+        name: "Research",
+        pages: [
+          {
+            id: "home",
+            title: "Research",
+            sections: [
+              {
+                id: "overview",
+                widgets: [
+                  { id: "status", type: "agentStatus", agent: "researcher", w: 2 },
+                  { id: "activity", type: "activity", w: 2 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
   }),
 });

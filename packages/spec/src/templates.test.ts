@@ -17,6 +17,37 @@ describe("template catalog", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  /**
+   * "Ready to set up" is the promise the catalog makes, so it is worth
+   * asserting rather than trusting: a template that ships without a face, or
+   * that quietly allows everything, is not the starting point someone
+   * clicking "Use this" is expecting.
+   */
+  it("every template arrives ready to run", () => {
+    for (const template of templates) {
+      const { meta, permissions, agents, tools } = template.manifest;
+      expect(meta.icon, `${template.id} has no icon`).toBeTruthy();
+      expect(meta.color, `${template.id} has no colour`).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(permissions.default, `${template.id} permits by default`).toBe("ask");
+
+      const granted = new Set(tools.map((tool) => tool.name));
+      for (const agent of agents) {
+        expect(
+          agent.instructions.length,
+          `${template.id}/${agent.name} is barely instructed`,
+        ).toBeGreaterThan(80);
+        for (const tool of agent.tools) expect(granted.has(tool)).toBe(true);
+      }
+    }
+  });
+
+  it("covers every category a user can filter by", () => {
+    const categories = new Set(templates.map((template) => template.category));
+    for (const expected of ["personal", "business", "development", "research"]) {
+      expect(categories.has(expected as never), `nothing in "${expected}"`).toBe(true);
+    }
+  });
+
   it("looks templates up by id", () => {
     expect(getTemplate("personal-assistant")?.name).toBe("Personal Assistant");
     expect(getTemplate("nope")).toBeUndefined();

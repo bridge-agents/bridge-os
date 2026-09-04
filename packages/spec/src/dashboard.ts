@@ -8,9 +8,23 @@ import { SlugSchema } from "./common.js";
  * schema from day one.
  */
 
+/**
+ * Size is a span, never a coordinate.
+ *
+ * A widget says how many columns of a four-column grid it wants and how tall
+ * it stands; where it lands is decided by the order it sits in. That keeps the
+ * property that made this document safe for an AI to write — there is no
+ * position to corrupt, no overlap to resolve, and every valid document lays
+ * out — while still letting someone drag a panel wider because the numbers
+ * beside it deserve the room.
+ */
 const widgetBase = {
   id: SlugSchema,
   title: z.string().optional(),
+  /** Columns spanned, out of four. Omitted means the type's natural width. */
+  w: z.number().int().min(1).max(4).optional(),
+  /** Rows spanned. Omitted means one. */
+  h: z.number().int().min(1).max(4).optional(),
 };
 
 /** Named API data binding, e.g. "runs.cost.daily" or "tasks.open". Resolved by the renderer. */
@@ -40,7 +54,13 @@ export type Widget = z.infer<typeof WidgetSchema>;
 export const DashboardSectionSchema = z.object({
   id: SlugSchema,
   title: z.string().optional(),
-  widgets: z.array(WidgetSchema).min(1),
+  /**
+   * Empty is allowed. It was not when only templates and the AI wrote these —
+   * an empty section then meant a mistake — but someone building a dashboard
+   * by hand adds the page before the panels that go on it, and a document you
+   * cannot save halfway through building is a document you lose.
+   */
+  widgets: z.array(WidgetSchema).default([]),
 });
 
 export const DashboardPageSchema = z.object({
@@ -69,6 +89,13 @@ export const DashboardThemeSchema = z.object({
 export const DashboardSchema = z
   .object({
     version: z.literal(1),
+    /**
+     * Stable handle for switching between dashboards. Optional because
+     * documents written before there could be more than one do not carry it,
+     * and because the AI should not have to invent one — everything Bridge
+     * itself writes fills it in.
+     */
+    id: SlugSchema.optional(),
     name: z.string().min(1),
     theme: DashboardThemeSchema.prefault({}),
     pages: z.array(DashboardPageSchema).min(1),

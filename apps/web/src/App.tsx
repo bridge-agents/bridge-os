@@ -6,6 +6,7 @@ import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { TooltipProvider } from "./components/ui/tooltip.js";
 import { cn } from "./lib/utils.js";
+import { RouteErrorBoundary } from "./RouteError.jsx";
 import { SignIn } from "./routes/SignIn.jsx";
 import { Sidebar } from "./Sidebar.jsx";
 import { SessionProvider, useSession } from "./session.jsx";
@@ -30,6 +31,9 @@ const Automations = lazy(() =>
 );
 const Channels = lazy(() =>
   import("./routes/Channels.jsx").then((module) => ({ default: module.Channels })),
+);
+const Activity = lazy(() =>
+  import("./routes/Activity.jsx").then((module) => ({ default: module.Activity })),
 );
 const Knowledge = lazy(() =>
   import("./routes/Knowledge.jsx").then((module) => ({ default: module.Knowledge })),
@@ -85,6 +89,10 @@ const PAGE_TITLES: Record<string, { title: string; description: string }> = {
     description: "Schedules and triggers — work Bridge does on its own",
   },
   "/channels": { title: "Channels", description: "Connect agents to messaging platforms" },
+  "/activity": {
+    title: "Activity",
+    description: "Every run, what it called, what it cost, and why it failed",
+  },
   "/knowledge": { title: "Knowledge", description: "Durable context shared across agent runs" },
   "/settings": { title: "Settings", description: "Workspace preferences and access" },
 };
@@ -132,24 +140,27 @@ function Shell() {
             )}
           >
             <div className={cn("rise flex min-h-full min-w-0 w-full flex-col", isChat && "h-full")}>
-              <Suspense fallback={<Spinner label={`Loading ${page.title.toLowerCase()}`} />}>
-                <Routes>
-                  <Route path="/chat" element={<Chat />} />
-                  <Route path="/dashboards" element={<Dashboards />} />
-                  <Route path="/agents" element={<Agents />} />
-                  <Route path="/agents/:agentId" element={<AgentDetail />} />
-                  <Route path="/approvals" element={<Approvals />} />
-                  <Route path="/automations" element={<Automations />} />
-                  <Route path="/channels" element={<Channels />} />
-                  <Route path="/knowledge" element={<Knowledge />} />
-                  <Route
-                    path="/providers"
-                    element={<Navigate to="/settings#providers" replace />}
-                  />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="*" element={<Navigate to="/chat" replace />} />
-                </Routes>
-              </Suspense>
+              <RouteErrorBoundary resetKey={pathname}>
+                <Suspense fallback={<Spinner label={`Loading ${page.title.toLowerCase()}`} />}>
+                  <Routes>
+                    <Route path="/chat" element={<Chat />} />
+                    <Route path="/dashboards" element={<Dashboards />} />
+                    <Route path="/agents" element={<Agents />} />
+                    <Route path="/agents/:agentId" element={<AgentDetail />} />
+                    <Route path="/approvals" element={<Approvals />} />
+                    <Route path="/automations" element={<Automations />} />
+                    <Route path="/channels" element={<Channels />} />
+                    <Route path="/activity" element={<Activity />} />
+                    <Route path="/knowledge" element={<Knowledge />} />
+                    <Route
+                      path="/providers"
+                      element={<Navigate to="/settings#providers" replace />}
+                    />
+                    <Route path="/settings" element={<Settings />} />
+                    <Route path="*" element={<Navigate to="/chat" replace />} />
+                  </Routes>
+                </Suspense>
+              </RouteErrorBoundary>
             </div>
           </main>
         </div>

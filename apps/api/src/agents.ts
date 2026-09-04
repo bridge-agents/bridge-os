@@ -18,7 +18,7 @@ import {
   safeParseManifest,
   templates,
 } from "@bridge/spec";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth, requireRole, requireWorkspace } from "./auth.js";
@@ -46,6 +46,12 @@ const CreateAgentSchema = z
     manifest: z.unknown().optional(),
     name: z.string().min(1).max(120).optional(),
     instructions: z.string().max(20_000).optional(),
+    /** Emoji or small data URL; validated properly by the manifest schema. */
+    icon: z.string().max(200_000).optional(),
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/)
+      .optional(),
   })
   .refine((body) => body.templateId || body.manifest || body.name, {
     message: "provide one of: templateId, manifest, or name",
@@ -64,6 +70,9 @@ export function agentRoutes(deps: AppDeps) {
         status: agents.status,
         specVersion: agents.specVersion,
         updatedAt: agents.updatedAt,
+        // Plucked in SQL: the fleet grid wants two strings, not every manifest.
+        icon: sql<string | null>`${agents.manifest} -> 'meta' ->> 'icon'`,
+        color: sql<string | null>`${agents.manifest} -> 'meta' ->> 'color'`,
       })
       .from(agents)
       .where(eq(agents.workspaceId, c.get("workspaceId")))
@@ -79,12 +88,23 @@ export function agentRoutes(deps: AppDeps) {
     if (body.templateId) {
       const template = getTemplate(body.templateId);
       if (!template) throw new BridgeError("not_found", `unknown template "${body.templateId}"`);
-      manifest = validate(instantiateTemplate(template, { name: body.name }));
+      manifest = validate(
+        instantiateTemplate(template, {
+          name: body.name,
+          icon: body.icon,
+          color: body.color,
+        }),
+      );
     } else if (body.manifest) {
       manifest = validate(body.manifest);
     } else {
       manifest = validate(
-        blankManifest({ name: body.name ?? "New Agent", instructions: body.instructions }),
+        blankManifest({
+          name: body.name ?? "New Agent",
+          instructions: body.instructions,
+          icon: body.icon,
+          color: body.color,
+        }),
       );
     }
 
@@ -232,6 +252,14 @@ export function templateRoutes() {
     }),
   );
 
+  /**
+   * The gallery's view of the catalog.
+   *
+   * `setup` is the part that matters: a template whose tools all ship with
+   * Bridge works the moment it is created, while one that reaches Gmail needs
+   * a token first. Saying so up front is the difference between choosing a
+   * template and discovering ten minutes later that it cannot run.
+   */
   app.get("/", (c) =>
     c.json({
       templates: templates.map(({ id, name, description, category, manifest }) => ({
@@ -239,8 +267,22 @@ export function templateRoutes() {
         name,
         description,
         category,
+        icon: manifest.meta.icon ?? null,
+        color: manifest.meta.color ?? null,
         agents: manifest.agents.length,
         tools: manifest.tools.map((tool) => tool.name),
+        /**
+         * Only MCP grants need a credential. An `http` grant is the native
+         * HTTP tool under another name (see the runtime's ToolRegistry), so
+         * treating every non-native kind as setup work would send people off
+         * to connect a tool that is already connected.
+         */
+        setup: manifest.tools.filter((tool) => tool.kind === "mcp").map((tool) => tool.name),
+        schedules: manifest.triggers.schedules.map((schedule) => ({
+          name: schedule.title ?? schedule.name,
+          cron: schedule.cron ?? null,
+          every: schedule.every ?? null,
+        })),
       })),
     }),
   );

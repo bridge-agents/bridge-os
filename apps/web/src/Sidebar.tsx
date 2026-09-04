@@ -421,15 +421,14 @@ function SidebarPanel({
       iconClassName: "size-5 scale-[1.4]",
       contentClassName: "-translate-x-1",
     },
+    { to: "/activity", label: "Activity", icon: CircleGauge },
     { to: "/knowledge", label: "Knowledge", icon: KnowledgeIcon },
     { to: "/approvals", label: "Approvals", icon: ApprovalsIcon, badge: pendingApprovals },
     { to: "/automations", label: "Automations", icon: AutomationsIcon },
     { to: "/channels", label: "Channels", icon: ChannelsIcon },
     { to: "/settings", label: "Settings", icon: SettingsIcon },
   ];
-  const planned: NavItem[] = [
-    { to: "#", label: "Observability", icon: CircleGauge, planned: "P9" },
-  ];
+  const planned: NavItem[] = [];
   const deployed = agents.filter((agent) => agent.status === "deployed");
 
   return (
@@ -493,7 +492,7 @@ function SidebarPanel({
                     onClick={onNavigate}
                     className="flex h-7 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   >
-                    <AgentArtwork className="size-4" />
+                    <AgentArtwork icon={agent.icon} color={agent.color} className="size-4" />
                     <span className="truncate">{agent.name}</span>
                   </NavLink>
                 ))
@@ -526,15 +525,18 @@ function SidebarPanel({
               )}
             </NavigationSection>
 
-            <NavigationSection
-              label="Roadmap"
-              open={sections.planned ?? false}
-              onOpenChange={(open) => setSection("planned", open)}
-            >
-              {planned.map((item) => (
-                <NavigationItem key={item.label} item={item} collapsed={false} />
-              ))}
-            </NavigationSection>
+            {/* Only rendered while something is still unbuilt. */}
+            {planned.length > 0 && (
+              <NavigationSection
+                label="Roadmap"
+                open={sections.planned ?? false}
+                onOpenChange={(open) => setSection("planned", open)}
+              >
+                {planned.map((item) => (
+                  <NavigationItem key={item.label} item={item} collapsed={false} />
+                ))}
+              </NavigationSection>
+            )}
           </>
         )}
       </ScrollArea>

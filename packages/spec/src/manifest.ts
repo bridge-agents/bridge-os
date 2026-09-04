@@ -9,7 +9,7 @@ import { PermissionPolicySchema } from "./permissions.js";
  * declarative description of an agent system. Templates, blank creation, and
  * AI-generated agents all compile into this. See ADR-0002.
  */
-export const SPEC_VERSION = 1;
+export const SPEC_VERSION = 2;
 
 export const AgentDefSchema = z.object({
   name: SlugSchema,
@@ -198,6 +198,19 @@ export const ManifestSchema = z
       description: z.string().optional(),
       /** Template id this manifest was instantiated from, if any. */
       template: z.string().optional(),
+      /**
+       * The agent's face: one emoji, or a small `data:image/...` URL. It lives
+       * in the manifest rather than beside it so an agent that is exported,
+       * moved between deployment targets, or handed to someone else still
+       * looks like itself. The cap is generous enough for a downscaled square
+       * and small enough that nobody pastes a photograph into a database row.
+       */
+      icon: z.string().max(200_000).optional(),
+      /** Accent behind the icon, `#rrggbb`. */
+      color: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .optional(),
       tags: z.array(z.string()).default([]),
     }),
     models: z.object({
@@ -225,7 +238,12 @@ export const ManifestSchema = z
     channels: z.array(ChannelBindingSchema).default([]),
     deployment: DeploymentSchema.prefault({}),
     runtime: RuntimeConfigSchema.prefault({}),
-    dashboard: DashboardSchema.optional(),
+    /**
+     * An agent can be looked at in more than one way — what it is doing now,
+     * what it has cost, what it has produced — and cramming those into one
+     * document made every view a compromise. Ordered; the first is what opens.
+     */
+    dashboards: z.array(DashboardSchema).default([]),
   })
   .superRefine((manifest, ctx) => {
     const agentNames = new Set(manifest.agents.map((a) => a.name));
@@ -301,8 +319,19 @@ export type Manifest = z.infer<typeof ManifestSchema>;
  * Versioned upgrade functions: migrations[n] upgrades a manifest from
  * specVersion n to n+1. Every breaking schema change ships one.
  */
-const migrations: Record<number, (manifest: Record<string, unknown>) => Record<string, unknown>> =
-  {};
+const migrations: Record<number, (manifest: Record<string, unknown>) => Record<string, unknown>> = {
+  /**
+   * 1 → 2: one dashboard became a list of them.
+   *
+   * Every agent built before this carries a single `dashboard`, and dropping
+   * it would silently delete a view somebody built. It becomes the first entry
+   * instead, which is also the one that opens by default.
+   */
+  1: ({ dashboard, ...rest }) => ({
+    ...rest,
+    dashboards: dashboard ? [dashboard] : [],
+  }),
+};
 
 export function migrateManifest(input: unknown): unknown {
   if (typeof input !== "object" || input === null) return input;

@@ -83,14 +83,22 @@ export interface AgentSummary {
   status: string;
   specVersion: number;
   updatedAt: string;
+  /** Emoji or data URL from the manifest; null when the agent has no face yet. */
+  icon?: string | null;
+  color?: string | null;
 }
 export interface TemplateSummary {
   id: string;
   name: string;
   description: string;
   category: string;
+  icon: string | null;
+  color: string | null;
   agents: number;
   tools: string[];
+  /** Tools that need connecting before this template can do its job. */
+  setup: string[];
+  schedules: { name: string; cron: string | null; every: string | null }[];
 }
 export interface ProviderConfig {
   id: string;
@@ -167,6 +175,9 @@ export interface Widget {
   content?: string;
   url?: string;
   agent?: string;
+  /** Columns spanned out of four, and rows tall. Absent means natural size. */
+  w?: number;
+  h?: number;
 }
 export interface DashboardSection {
   id: string;
@@ -180,6 +191,8 @@ export interface DashboardPage {
 }
 export interface Dashboard {
   version: 1;
+  /** Stable handle for switching. Absent on documents written before there could be several. */
+  id?: string;
   name: string;
   theme?: { accent?: string; background?: string; appearance?: "dark" | "light" | "system" };
   pages: DashboardPage[];
@@ -192,6 +205,13 @@ export interface DashboardTemplateSummary {
   pages: number;
   widgets: number;
   dashboard: Dashboard;
+}
+
+export interface DataSourceInfo {
+  name: string;
+  kind: "metric" | "series" | "rows";
+  description: string;
+  unit?: string;
 }
 
 export type SourceData =
@@ -245,6 +265,83 @@ export interface KnowledgeEdge {
   toId: string;
   relation: string;
 }
+/** One run as the activity views show it: the agent named, cost included. */
+export interface ActivityRun {
+  id: string;
+  agentId: string;
+  agentName: string;
+  status: string;
+  trigger: string;
+  conversationId: string | null;
+  error: string | null;
+  attempt: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: string | null;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+export interface TraceStep {
+  id: string;
+  seq: number;
+  type: string;
+  agentName: string | null;
+  data: Record<string, unknown>;
+  inputTokens: number;
+  outputTokens: number;
+  createdAt: string;
+}
+export interface RunActivity {
+  run: ActivityRun;
+  steps: TraceStep[];
+  approvals: {
+    id: string;
+    toolName: string;
+    action: string;
+    status: string;
+    reason: string | null;
+    createdAt: string;
+    decidedAt: string | null;
+  }[];
+  summary: {
+    modelCalls: number;
+    toolCalls: number;
+    failedToolCalls: number;
+    delegations: number;
+    errors: number;
+    tools: string[];
+    durationMs: number | null;
+  };
+}
+export interface WorkspaceUsage {
+  since: string;
+  totals: {
+    runs: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: string;
+    failed: number;
+    succeeded: number;
+    medianSeconds: number;
+  };
+  byAgent: {
+    agentId: string;
+    agentName: string;
+    runs: number;
+    failed: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: string;
+  }[];
+  daily: { day: string; runs: number; failed: number; costUsd: string }[];
+}
+export interface RuntimeHealth {
+  state: "healthy" | "degraded" | "stalled";
+  lastHour: { runs: number; failed: number; failureRate: number };
+  live: { running: number; queued: number; waiting: number; stalled: number };
+  deployedAgents: number;
+}
 export interface MemoryEntry {
   id: string;
   agentId: string;
@@ -254,12 +351,18 @@ export interface MemoryEntry {
   content: string;
   createdAt: string;
 }
-export interface Manifest {
-  meta: { name: string; slug: string; description?: string };
-  agents: { name: string; instructions: string }[];
-  deployment: { target: string; background: boolean };
-  [key: string]: unknown;
-}
+/**
+ * The real manifest type, not a mirror of it.
+ *
+ * Dashboard wire types below stay local because the renderer only reads a few
+ * fields, but the agent editor writes to nearly every branch of the manifest —
+ * a hand-copied shape would drift from the schema the API validates against,
+ * and the first sign of it would be a save rejected in the user's face. The
+ * import is type-only, so nothing from the schema library reaches the bundle.
+ */
+export type { Manifest } from "@bridge/spec";
+
+import type { Manifest } from "@bridge/spec";
 
 export interface RunSummary {
   id: string;
@@ -503,17 +606,49 @@ export const api = {
   revokeInvitation: (workspaceId: string, invitationId: string) =>
     send<void>("DELETE", `/v1/workspaces/${workspaceId}/invitations/${invitationId}`),
 
-  templates: () => get<{ templates: TemplateSummary[] }>("/v1/templates"),
+  /**
+   * Normalised on the way in, because the API is not always this build's API.
+   *
+   * A desktop install updates its window and its server separately, and a dev
+   * server outlives plenty of API restarts — so a response can arrive without
+   * fields this version expects. Defaulting them once here means an older
+   * server renders a slightly plainer card, instead of throwing partway
+   * through a render and taking the whole application down with it.
+   */
+  templates: async () => {
+    const { templates } = await get<{ templates: Partial<TemplateSummary>[] }>("/v1/templates");
+    return {
+      templates: templates.map((template) => ({
+        ...template,
+        icon: template.icon ?? null,
+        color: template.color ?? null,
+        agents: template.agents ?? 1,
+        tools: template.tools ?? [],
+        setup: template.setup ?? [],
+        schedules: template.schedules ?? [],
+      })) as TemplateSummary[],
+    };
+  },
   dashboardTemplates: () =>
     get<{ templates: DashboardTemplateSummary[] }>("/v1/templates/dashboards"),
 
   /** Resolve one dashboard data source. Unknown names 404 by design. */
   data: (workspaceId: string, source: string) =>
     get<{ data: SourceData }>(`/v1/workspaces/${workspaceId}/data/${source}`),
-  workspaceDashboard: (workspaceId: string) =>
-    get<{ dashboard: Dashboard | null }>(`/v1/workspaces/${workspaceId}/dashboard`),
-  updateWorkspaceDashboard: (workspaceId: string, dashboard: Dashboard) =>
-    send<{ dashboard: Dashboard }>("PUT", `/v1/workspaces/${workspaceId}/dashboard`, dashboard),
+  /** The closed catalogue a widget may bind to. */
+  dataSources: (workspaceId: string) =>
+    get<{ sources: DataSourceInfo[] }>(`/v1/workspaces/${workspaceId}/data`),
+  /** Defaulted on the way in, so a server predating dashboard lists still reads. */
+  workspaceDashboards: async (workspaceId: string) => {
+    const body = await get<{ dashboards?: Dashboard[]; dashboard?: Dashboard | null }>(
+      `/v1/workspaces/${workspaceId}/dashboard`,
+    );
+    return {
+      dashboards: body.dashboards ?? (body.dashboard ? [body.dashboard] : []),
+    };
+  },
+  updateWorkspaceDashboards: (workspaceId: string, dashboards: Dashboard[]) =>
+    send<{ dashboards: Dashboard[] }>("PUT", `/v1/workspaces/${workspaceId}/dashboard`, dashboards),
   deleteWorkspaceDashboard: (workspaceId: string) =>
     send<void>("DELETE", `/v1/workspaces/${workspaceId}/dashboard`),
 
@@ -564,7 +699,14 @@ export const api = {
     ),
   createAgent: (
     workspaceId: string,
-    body: { templateId?: string; name?: string; instructions?: string },
+    body: {
+      templateId?: string;
+      name?: string;
+      instructions?: string;
+      manifest?: unknown;
+      icon?: string;
+      color?: string;
+    },
   ) =>
     send<{ agent: { id: string; manifest: Manifest } }>(
       "POST",
@@ -607,6 +749,28 @@ export const api = {
       "POST",
       `/v1/workspaces/${workspaceId}/agents/${agentId}/runs`,
       { input, ...options },
+    ),
+  activityRuns: (
+    workspaceId: string,
+    filters?: { agentId?: string; status?: string; limit?: number; cursor?: string },
+  ) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters ?? {})) {
+      if (value !== undefined && value !== "") params.set(key, String(value));
+    }
+    return get<{ runs: ActivityRun[]; nextCursor: string | null }>(
+      `/v1/workspaces/${workspaceId}/activity/runs${params.size ? `?${params}` : ""}`,
+    );
+  },
+  runActivity: (workspaceId: string, runId: string) =>
+    get<RunActivity>(`/v1/workspaces/${workspaceId}/activity/runs/${runId}/activity`),
+  usage: (workspaceId: string, days = 30) =>
+    get<WorkspaceUsage>(`/v1/workspaces/${workspaceId}/activity/usage?days=${days}`),
+  runtimeHealth: (workspaceId: string) =>
+    get<{ health: RuntimeHealth }>(`/v1/workspaces/${workspaceId}/activity/health`),
+  approvalHistory: (workspaceId: string) =>
+    get<{ approvals: (Approval & { decidedAt: string | null })[] }>(
+      `/v1/workspaces/${workspaceId}/activity/approvals/history`,
     ),
   runs: (workspaceId: string, agentId: string) =>
     get<{ runs: RunSummary[] }>(`/v1/workspaces/${workspaceId}/agents/${agentId}/runs`),

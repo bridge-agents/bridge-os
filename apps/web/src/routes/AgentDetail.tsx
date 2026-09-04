@@ -8,6 +8,7 @@ import {
   Play,
   Save,
   Server,
+  SlidersHorizontal,
   Square,
   Trash2,
 } from "lucide-react";
@@ -49,6 +50,7 @@ import { Textarea } from "../components/ui/textarea.js";
 import { NavArtwork } from "../NavArtwork.jsx";
 import { useWorkspaceId } from "../session.jsx";
 import { EmptyState, ErrorText, Field, Input, Spinner } from "../ui.jsx";
+import { AgentSetup } from "./AgentSetup.jsx";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "limit_reached", "refused"]);
 
@@ -151,7 +153,12 @@ export function AgentDetail() {
     <div className="flex w-full flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <AgentArtwork group={manifest.agents.length > 1} className="size-11" />
+          <AgentArtwork
+            group={manifest.agents.length > 1}
+            icon={manifest.meta.icon}
+            color={manifest.meta.color}
+            className="size-11"
+          />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-xl font-semibold">{manifest.meta.name}</h2>
@@ -267,18 +274,25 @@ export function AgentDetail() {
         </Card>
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList>
+      <Tabs defaultValue="setup" className="w-full">
+        <TabsList size="comfortable">
+          <TabsTrigger value="setup">
+            <SlidersHorizontal /> Setup
+          </TabsTrigger>
           <TabsTrigger value="overview">
             <Play /> Overview
           </TabsTrigger>
           <TabsTrigger value="runs">
             <History /> Runs
           </TabsTrigger>
-          <TabsTrigger value="configure">
-            <Braces /> Configure
+          <TabsTrigger value="advanced">
+            <Braces /> Advanced
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="setup" className="pt-4">
+          <AgentSetup manifest={manifest} busy={busy} onSave={(next) => void save(next)} />
+        </TabsContent>
 
         <TabsContent value="overview" className="pt-4">
           <Card className="rounded-lg">
@@ -349,7 +363,7 @@ export function AgentDetail() {
           )}
         </TabsContent>
 
-        <TabsContent value="configure" className="space-y-4 pt-4">
+        <TabsContent value="advanced" className="space-y-4 pt-4">
           <Card className="rounded-lg">
             <CardHeader>
               <CardTitle>Change with plain language</CardTitle>

@@ -1,7 +1,7 @@
 import { MockProvider } from "@bridge/sdk";
 import { describe, expect, it } from "vitest";
 import { OpenAiCompatibleProvider, retryDelay } from "./openai-compatible.js";
-import { estimateCost, getModelPrice } from "./pricing.js";
+import { estimateCost, getModelPrice, MODEL_PRICES } from "./pricing.js";
 import { createProvider, UnsupportedProviderError } from "./registry.js";
 
 /** Records what the adapter actually put on the wire. */
@@ -459,5 +459,53 @@ describe("riding out a rate limit", () => {
     // Without a header it backs off, and never sits still.
     expect(retryDelay(null, 0)).toBeGreaterThanOrEqual(500);
     expect(retryDelay(null, 3)).toBeGreaterThanOrEqual(4000);
+  });
+});
+
+/**
+ * Golden costs, one per published price point.
+ *
+ * Phase 9 asks for these by name because a cost the UI shows is a number
+ * someone will reconcile against an invoice. Hand-computed from
+ * MODEL_PRICES, so a careless edit to the table fails here rather than
+ * quietly re-pricing every historical run in the activity view.
+ */
+describe("what a run costs", () => {
+  const GOLDEN: [string, number, number, number][] = [
+    // model, input tokens, output tokens, expected USD
+    ["claude-opus-5", 1_000_000, 1_000_000, 5 + 25],
+    ["claude-opus-5", 250_000, 40_000, 0.25 * 5 + 0.04 * 25],
+    ["claude-sonnet-5", 1_000_000, 1_000_000, 3 + 15],
+    ["claude-sonnet-5", 12_000, 3_400, (12_000 / 1e6) * 3 + (3_400 / 1e6) * 15],
+    ["claude-haiku-4-5", 1_000_000, 1_000_000, 1 + 5],
+    ["claude-fable-5", 500_000, 20_000, 0.5 * 10 + 0.02 * 50],
+    ["claude-mythos-5", 1_000_000, 0, 10],
+    ["claude-opus-4-8", 0, 1_000_000, 25],
+  ];
+
+  it.each(GOLDEN)("prices %s at %i in / %i out", (model, inputTokens, outputTokens, expected) => {
+    const cost = estimateCost(model, { inputTokens, outputTokens });
+    expect(cost).toBeCloseTo(expected, 8);
+  });
+
+  it("charges nothing for a run that used nothing", () => {
+    expect(estimateCost("claude-sonnet-5", { inputTokens: 0, outputTokens: 0 })).toBe(0);
+  });
+
+  it("prices output at least as dearly as input, on every model we publish", () => {
+    // Not arithmetic — a sanity rail. Output cheaper than input in this table
+    // would mean the two columns were transposed on some row.
+    for (const [model, price] of Object.entries(MODEL_PRICES)) {
+      expect(price.outputPerMillion, model).toBeGreaterThanOrEqual(price.inputPerMillion);
+      expect(price.inputPerMillion, model).toBeGreaterThan(0);
+    }
+  });
+
+  it("says it does not know rather than guessing", () => {
+    // An unknown model must stay undefined all the way through, because the
+    // activity view renders that as "unknown", not as $0.00.
+    expect(
+      estimateCost("gpt-9-unreleased", { inputTokens: 1e6, outputTokens: 1e6 }),
+    ).toBeUndefined();
   });
 });

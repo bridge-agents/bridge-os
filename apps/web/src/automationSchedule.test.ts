@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calendarScheduleCron,
+  describeSchedule,
   parseCalendarSchedule,
   parseInterval,
   scheduleInterval,
@@ -21,5 +22,29 @@ describe("automation schedule controls", () => {
   it("converts interval controls to the manifest duration format", () => {
     expect(parseInterval("6h")).toEqual({ amount: "6", unit: "h" });
     expect(scheduleInterval("3", "d")).toBe("3d");
+  });
+});
+
+describe("describeSchedule", () => {
+  it.each([
+    ["0 7 * * 1-5", undefined, "Every weekday at 07:00"],
+    ["30 18 * * *", undefined, "Every day at 18:30"],
+    ["0 10 * * 0,6", undefined, "Every weekend day at 10:00"],
+    ["0 9 * * 1", undefined, "Mon at 09:00"],
+    ["15 6 * * 2,4", undefined, "Tue, Thu at 06:15"],
+    [undefined, "5m", "Every 5 minutes"],
+    [undefined, "1d", "Every day"],
+    [undefined, undefined, "No schedule"],
+  ])("%s / %s → %s", (cron, every, expected) => {
+    expect(describeSchedule(cron, every)).toBe(expected);
+  });
+
+  /**
+   * Anything these controls cannot express must show its cron rather than a
+   * confident wrong description — "first of the month" read as "every day"
+   * would be a lie about what runs unattended.
+   */
+  it("falls back to the expression it cannot describe", () => {
+    expect(describeSchedule("0 10 1 * *")).toBe("0 10 1 * *");
   });
 });

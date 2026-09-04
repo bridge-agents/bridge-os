@@ -256,9 +256,27 @@ async function proposeDashboard(options: {
     noun: "dashboard",
     parse: (raw) => {
       const parsed = DashboardSchema.safeParse(raw);
-      return parsed.success
-        ? { success: true, data: parsed.data }
-        : { success: false, issues: issuesOf(parsed.error) };
+      if (!parsed.success) return { success: false, issues: issuesOf(parsed.error) };
+
+      /**
+       * The document format tolerates an empty section, because someone
+       * building a dashboard by hand adds the page before the panels. A model
+       * has no such excuse: it was asked for a dashboard and returned a shell,
+       * so it is sent back with the specific complaint rather than having a
+       * blank page rendered at the user.
+       */
+      const empty = parsed.data.pages.flatMap((page) =>
+        page.sections.filter((section) => section.widgets.length === 0).map((s) => s.id),
+      );
+      if (empty.length > 0) {
+        return {
+          success: false,
+          issues: empty
+            .map((id) => `section "${id}": add at least one widget, or leave the section out`)
+            .join("\n"),
+        };
+      }
+      return { success: true, data: parsed.data };
     },
   });
   return { dashboard: value, attempts };
@@ -437,8 +455,13 @@ export function architectRoutes(deps: AppDeps) {
       .where(and(eq(agents.workspaceId, workspaceId), eq(agents.id, c.req.param("agentId"))));
     if (!agent) throw new BridgeError("not_found", "agent not found");
 
-    const manifest = agent.manifest as { dashboard?: unknown; meta?: { name?: string } };
-    const current = manifest.dashboard ?? blankDashboard(manifest.meta?.name ?? "Dashboard");
+    const manifest = agent.manifest as { dashboards?: unknown[]; meta?: { name?: string } };
+    // Which one to edit, since an agent may now have several.
+    const wanted = c.req.query("dashboard");
+    const existing = (manifest.dashboards ?? []) as { id?: string }[];
+    const current =
+      (wanted ? existing.find((one) => one.id === wanted) : existing[0]) ??
+      blankDashboard(manifest.meta?.name ?? "Dashboard");
 
     const designer = await resolveDesigner(workspaceId, body.provider, body.model);
     const { dashboard, attempts } = await proposeDashboard({

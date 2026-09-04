@@ -12,12 +12,14 @@ export const personalAssistantTemplate: Template = TemplateSchema.parse({
     "A day-to-day assistant that manages tasks and research, with a morning briefing schedule.",
   category: "personal",
   manifest: parseManifest({
-    specVersion: 1,
+    specVersion: 2,
     meta: {
       name: "Personal Assistant",
       slug: "personal-assistant",
       description: "Handles daily tasks, research and briefings.",
       template: "personal-assistant",
+      icon: "🤝",
+      color: "#4C6EF5",
     },
     models: {
       default: { provider: "anthropic", model: "claude-sonnet-5" },
@@ -76,25 +78,28 @@ export const personalAssistantTemplate: Template = TemplateSchema.parse({
         },
       ],
     },
-    dashboard: {
-      version: 1,
-      name: "Personal",
-      pages: [
-        {
-          id: "home",
-          title: "Home",
-          sections: [
-            {
-              id: "overview",
-              widgets: [
-                { id: "status", type: "agentStatus", agent: "assistant" },
-                { id: "tasks", type: "taskList" },
-                { id: "activity", type: "activity" },
-              ],
-            },
-          ],
-        },
-      ],
-    },
+    dashboards: [
+      {
+        version: 1,
+        id: "personal",
+        name: "Personal",
+        pages: [
+          {
+            id: "home",
+            title: "Home",
+            sections: [
+              {
+                id: "overview",
+                widgets: [
+                  { id: "status", type: "agentStatus", agent: "assistant" },
+                  { id: "tasks", type: "taskList" },
+                  { id: "activity", type: "activity" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
   }),
 });

@@ -731,7 +731,11 @@ export function Chat() {
   const Welcome = useCallback(
     () => (
       <div className="mb-7 flex flex-col items-center px-4 text-center">
-        <AgentArtwork className="mb-4 size-14" />
+        <AgentArtwork
+          icon={currentAgent?.icon}
+          color={currentAgent?.color}
+          className="mb-4 size-14"
+        />
         <h1 className="text-xl font-semibold tracking-normal sm:text-2xl">
           Start a conversation with {currentAgent?.name ?? "your agent"}
         </h1>
@@ -740,7 +744,7 @@ export function Chat() {
         </p>
       </div>
     ),
-    [currentAgent?.name],
+    [currentAgent?.name, currentAgent?.icon, currentAgent?.color],
   );
 
   const onConversationCreated = useCallback(
@@ -788,7 +792,11 @@ export function Chat() {
           }}
         >
           <SelectTrigger className="min-w-0 flex-1 sm:w-56 sm:flex-none" aria-label="Chat agent">
-            <AgentArtwork className="size-5" />
+            <AgentArtwork
+              icon={currentAgent?.icon}
+              color={currentAgent?.color}
+              className="size-5"
+            />
             <SelectValue placeholder="Select a deployed agent" />
           </SelectTrigger>
           <SelectContent align="start">
@@ -796,7 +804,7 @@ export function Chat() {
               <SelectLabel>Deployed agents</SelectLabel>
               {deployed.map((agent) => (
                 <SelectItem key={agent.id} value={agent.id}>
-                  <span className="size-1.5 rounded-full bg-emerald-500" />
+                  <AgentArtwork icon={agent.icon} color={agent.color} className="size-4" />
                   {agent.name}
                 </SelectItem>
               ))}

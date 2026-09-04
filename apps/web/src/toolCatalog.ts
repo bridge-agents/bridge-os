@@ -336,12 +336,9 @@ export const TOOL_CATEGORIES = [
   "Productivity",
 ] as const;
 
-/** Grant names already on an agent's entry, whatever shape the manifest is in. */
+/** Grant names already on an agent's entry. */
 export function grantedTools(manifest: Manifest | undefined): string[] {
-  const tools = manifest?.tools;
-  return Array.isArray(tools)
-    ? tools.map((tool) => String((tool as { name?: unknown }).name ?? "")).filter(Boolean)
-    : [];
+  return (manifest?.tools ?? []).map((tool) => tool.name);
 }
 
 /**
@@ -357,9 +354,9 @@ export function withTool(
   secretName?: string,
 ): Manifest {
   const next = structuredClone(manifest);
-  const tools = Array.isArray(next.tools) ? [...(next.tools as unknown[])] : [];
   if (!grantedTools(next).includes(entry.id)) {
-    tools.push(
+    next.tools = [
+      ...next.tools,
       entry.kind === "native"
         ? { name: entry.id, kind: "native", config: {} }
         : {
@@ -368,9 +365,8 @@ export function withTool(
             config: { url: entry.url },
             ...(secretName ? { secretBindings: { "headers.authorization": secretName } } : {}),
           },
-    );
+    ];
   }
-  next.tools = tools;
 
   /**
    * Every agent in the manifest that can already use tools gets the new one;
@@ -379,13 +375,13 @@ export function withTool(
    * name every secret it may resolve — a grant alone does not open the safe.
    */
   next.agents = next.agents.map((agent) => {
-    const own = (agent as { tools?: string[] }).tools;
-    if (!Array.isArray(own)) return agent;
-    const secrets = (agent as { secrets?: string[] }).secrets ?? [];
+    if (agent.tools.length === 0) return agent;
     return {
       ...agent,
-      tools: own.includes(entry.id) ? own : [...own, entry.id],
-      ...(secretName && !secrets.includes(secretName) ? { secrets: [...secrets, secretName] } : {}),
+      tools: agent.tools.includes(entry.id) ? agent.tools : [...agent.tools, entry.id],
+      ...(secretName && !agent.secrets.includes(secretName)
+        ? { secrets: [...agent.secrets, secretName] }
+        : {}),
     };
   });
 
@@ -394,3 +390,79 @@ export function withTool(
 
 /** The secret name a connector's credential is stored under. */
 export const toolSecretName = (id: string) => `tool-${id}`;
+
+/** Remove a tool grant and everything that referenced it. */
+export function withoutTool(manifest: Manifest, toolId: string): Manifest {
+  const next = structuredClone(manifest);
+  next.tools = next.tools.filter((tool) => tool.name !== toolId);
+  next.agents = next.agents.map((agent) => ({
+    ...agent,
+    tools: agent.tools.filter((tool) => tool !== toolId),
+  }));
+  // A rule about a tool nobody has is clutter that outlives its subject.
+  next.permissions = {
+    ...next.permissions,
+    rules: next.permissions.rules.filter((rule) => rule.resource !== `tool:${toolId}`),
+  };
+  return next;
+}
+
+/**
+ * The actions of a native tool that change nothing.
+ *
+ * This is what lets "let it look, but ask before it changes anything" be a
+ * single choice rather than a checklist. Only native tools appear here: Bridge
+ * knows what its own actions do, and cannot know whether some MCP server's
+ * `update_record` is reversible.
+ */
+export const SAFE_ACTIONS: Record<string, string[]> = {
+  filesystem: ["read", "list", "glob", "grep", "mkdir"],
+  http: ["read"],
+  "web-search": ["search"],
+};
+
+export type ToolAccess = "ask" | "safe" | "allow" | "deny";
+
+export const ACCESS_LABELS: Record<ToolAccess, { title: string; hint: string }> = {
+  ask: { title: "Ask me every time", hint: "Nothing happens without your say-so." },
+  safe: {
+    title: "Look freely, ask before changing",
+    hint: "Reading and searching run on their own; anything that changes something asks first.",
+  },
+  allow: { title: "Always allow", hint: "Runs without asking, including changes." },
+  deny: { title: "Never allow", hint: "Blocked outright, even if the agent tries." },
+};
+
+/** How a tool is currently governed, read back from the manifest's rules. */
+export function toolAccess(manifest: Manifest, toolId: string): ToolAccess {
+  const rules = manifest.permissions.rules.filter((rule) => rule.resource === `tool:${toolId}`);
+  const wildcard = rules.find((rule) => rule.actions === "*");
+  if (wildcard?.effect === "deny") return "deny";
+  if (wildcard?.effect === "allow") return "allow";
+  return rules.some((rule) => rule.effect === "allow") ? "safe" : "ask";
+}
+
+/**
+ * Rewrite one tool's rules to a chosen level.
+ *
+ * Rules for the tool are replaced rather than appended to: first match wins,
+ * so leaving an old rule in front of a new one would silently keep the old
+ * answer and make the setting appear not to work.
+ */
+export function withToolAccess(manifest: Manifest, toolId: string, access: ToolAccess): Manifest {
+  const next = structuredClone(manifest);
+  const others = next.permissions.rules.filter((rule) => rule.resource !== `tool:${toolId}`);
+  const resource = `tool:${toolId}`;
+
+  const added: Manifest["permissions"]["rules"] =
+    access === "allow"
+      ? [{ resource, actions: "*", effect: "allow" }]
+      : access === "deny"
+        ? [{ resource, actions: "*", effect: "deny" }]
+        : access === "safe" && SAFE_ACTIONS[toolId]
+          ? [{ resource, actions: SAFE_ACTIONS[toolId] as string[], effect: "allow" }]
+          : [];
+
+  next.permissions = { ...next.permissions, rules: [...added, ...others] };
+  return next;
+}

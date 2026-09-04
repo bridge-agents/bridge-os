@@ -82,3 +82,41 @@ export function scheduleInterval(amount: string, unit: IntervalUnit): string {
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error("Choose a positive interval.");
   return `${parsed}${unit}`;
 }
+
+const UNIT_WORDS: Record<IntervalUnit, string> = {
+  s: "second",
+  m: "minute",
+  h: "hour",
+  d: "day",
+};
+
+/**
+ * A schedule in words.
+ *
+ * "0 7 * * 1-5" is precise and unreadable. Anyone reviewing what their agent
+ * does unattended should be able to see "Every weekday at 07:00" without
+ * having to know cron, so the settings screen never shows the expression
+ * unless it is one these controls cannot express.
+ */
+export function describeSchedule(cron?: string, every?: string): string {
+  if (every) {
+    const { amount, unit } = parseInterval(every);
+    const word = UNIT_WORDS[unit];
+    return amount === "1" ? `Every ${word}` : `Every ${amount} ${word}s`;
+  }
+  if (!cron) return "No schedule";
+
+  const calendar = parseCalendarSchedule(cron);
+  if (!calendar.supported) return cron;
+
+  const { time, days } = calendar;
+  if (days.length === 7) return `Every day at ${time}`;
+  if (days.length === 5 && [1, 2, 3, 4, 5].every((day) => days.includes(day))) {
+    return `Every weekday at ${time}`;
+  }
+  if (days.length === 2 && days.includes(0) && days.includes(6)) {
+    return `Every weekend day at ${time}`;
+  }
+  const names = SCHEDULE_DAYS.filter((day) => days.includes(day.value)).map((day) => day.label);
+  return `${names.join(", ")} at ${time}`;
+}

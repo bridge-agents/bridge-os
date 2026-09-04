@@ -8,12 +8,14 @@ export const softwareTeamTemplate: Template = TemplateSchema.parse({
     "An orchestrator with planning, implementation and review agents. Code changes require approval.",
   category: "development",
   manifest: parseManifest({
-    specVersion: 1,
+    specVersion: 2,
     meta: {
       name: "Software Development Team",
       slug: "software-team",
       description: "Plans, implements and reviews software changes.",
       template: "software-team",
+      icon: "⚙️",
+      color: "#586170",
     },
     models: {
       default: { provider: "anthropic", model: "claude-sonnet-5" },
@@ -64,5 +66,28 @@ export const softwareTeamTemplate: Template = TemplateSchema.parse({
       ],
     },
     runtime: { limits: { maxConcurrentRuns: 2, maxRunSeconds: 1800 } },
+    dashboards: [
+      {
+        version: 1,
+        id: "delivery",
+        name: "Delivery",
+        pages: [
+          {
+            id: "home",
+            title: "Delivery",
+            sections: [
+              {
+                id: "overview",
+                widgets: [
+                  { id: "status", type: "agentStatus", agent: "lead", w: 2 },
+                  { id: "approvals", type: "approvalQueue", title: "Waiting on you", w: 2 },
+                  { id: "activity", type: "activity", w: 4 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
   }),
 });

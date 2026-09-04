@@ -1,6 +1,6 @@
 import { BridgeError } from "@bridge/core";
 import { agents, approvals, events, runSteps, runs } from "@bridge/db";
-import { getDataSource, type SourceData } from "@bridge/spec";
+import { DATA_SOURCES, getDataSource, type SourceData } from "@bridge/spec";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { requireAuth, requireWorkspace } from "./auth.js";
@@ -269,6 +269,15 @@ export async function resolveSource(
 export function dataRoutes(deps: AppDeps) {
   const app = new Hono<AppEnv>();
   app.use("*", requireAuth(deps), requireWorkspace(deps));
+
+  /**
+   * What a widget may bind to.
+   *
+   * Served rather than mirrored in the client: the catalogue is closed on
+   * purpose, and a copy in the browser would drift into offering bindings
+   * this deployment cannot actually resolve.
+   */
+  app.get("/", (c) => c.json({ sources: DATA_SOURCES }));
 
   app.get("/:source", async (c) => {
     const data = await resolveSource(deps, c.get("workspaceId"), c.req.param("source"));

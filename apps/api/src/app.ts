@@ -2,6 +2,7 @@ import { BridgeError } from "@bridge/core";
 import { pingDb } from "@bridge/db";
 import { SPEC_VERSION, safeParseManifest } from "@bridge/spec";
 import { Hono } from "hono";
+import { activityRoutes } from "./activity.js";
 import { agentRoutes, templateRoutes } from "./agents.js";
 import { approvalRoutes } from "./approvals.js";
 import { architectRoutes } from "./architect.js";
@@ -105,6 +106,7 @@ export function buildApp(deps: AppDeps) {
   routes.route("/v1/workspaces/:workspaceId/secrets", secretRoutes(deps));
   routes.route("/v1/workspaces/:workspaceId/search", searchRoutes(deps));
   routes.route("/v1/workspaces/:workspaceId/memory", memoryRoutes(deps));
+  routes.route("/v1/workspaces/:workspaceId/activity", activityRoutes(deps));
   routes.route("/v1/workspaces/:workspaceId/data", dataRoutes(deps));
   routes.route("/v1/workspaces/:workspaceId/dashboard", dashboardRoutes(deps));
   routes.route("/v1/workspaces/:workspaceId/architect", architectRoutes(deps));

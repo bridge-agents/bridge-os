@@ -1,7 +1,15 @@
 import { parseManifest, personalAssistantTemplate } from "@bridge/spec";
 import { describe, expect, it } from "vitest";
 import type { Manifest } from "./api.js";
-import { grantedTools, TOOL_CATALOG, toolSecretName, withTool } from "./toolCatalog.js";
+import {
+  grantedTools,
+  TOOL_CATALOG,
+  toolAccess,
+  toolSecretName,
+  withoutTool,
+  withTool,
+  withToolAccess,
+} from "./toolCatalog.js";
 
 const template = () => structuredClone(personalAssistantTemplate.manifest) as unknown as Manifest;
 
@@ -57,5 +65,53 @@ describe("tool catalog", () => {
     expect(parseManifest(twice).agents[0]?.tools.filter((name) => name === "shell")).toHaveLength(
       1,
     );
+  });
+
+  it("removes a tool from the grants, the agents, and the rules at once", () => {
+    const next = withoutTool(template(), "filesystem");
+    const parsed = parseManifest(next);
+
+    expect(grantedTools(next)).not.toContain("filesystem");
+    expect(parsed.agents.every((agent) => !agent.tools.includes("filesystem"))).toBe(true);
+    /**
+     * The manifest rejects an agent referencing a tool that no longer exists,
+     * so leaving either half behind would make the agent unsaveable.
+     */
+    expect(parsed.permissions.rules.some((rule) => rule.resource === "tool:filesystem")).toBe(
+      false,
+    );
+  });
+});
+
+describe("tool access levels", () => {
+  it("reads the level a template already expresses", () => {
+    const manifest = template();
+    // The template allows web search outright and only safe file actions.
+    expect(toolAccess(manifest, "web-search")).toBe("allow");
+    expect(toolAccess(manifest, "filesystem")).toBe("safe");
+    expect(toolAccess(manifest, "shell")).toBe("ask");
+  });
+
+  it.each(["ask", "safe", "allow", "deny"] as const)("round-trips %s", (access) => {
+    const next = withToolAccess(template(), "filesystem", access);
+    expect(toolAccess(next, "filesystem")).toBe(access);
+    expect(parseManifest(next).permissions.default).toBe("ask");
+  });
+
+  /**
+   * First match wins, so a new rule appended behind an old one would leave the
+   * old answer in force — the setting would appear to save and change nothing.
+   */
+  it("replaces a tool's existing rules rather than stacking on them", () => {
+    const denied = withToolAccess(template(), "web-search", "deny");
+    const rules = denied.permissions.rules.filter((rule) => rule.resource === "tool:web-search");
+
+    expect(rules).toHaveLength(1);
+    expect(toolAccess(denied, "web-search")).toBe("deny");
+  });
+
+  it("leaves other tools' rules alone", () => {
+    const next = withToolAccess(template(), "web-search", "deny");
+    expect(toolAccess(next, "filesystem")).toBe("safe");
   });
 });

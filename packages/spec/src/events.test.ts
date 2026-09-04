@@ -29,7 +29,7 @@ describe("events", () => {
 
 describe("dashboard", () => {
   it("rejects navigation to unknown pages", () => {
-    const dashboard = structuredClone(personalAssistantTemplate.manifest.dashboard);
+    const dashboard = structuredClone(personalAssistantTemplate.manifest.dashboards[0]);
     expect(dashboard).toBeDefined();
     const result = DashboardSchema.safeParse({ ...dashboard, navigation: ["missing-page"] });
     expect(result.success).toBe(false);

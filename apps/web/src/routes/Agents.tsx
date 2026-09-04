@@ -1,7 +1,8 @@
-import { ArrowRight, FileCode2, Plus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, CalendarClock, FileCode2, KeyRound, Plus, Search } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AgentArtwork } from "../AgentArtwork.jsx";
+import { AgentIconPicker } from "../AgentIconPicker.jsx";
 import {
   type AgentSummary,
   api,
@@ -9,6 +10,7 @@ import {
   type Manifest,
   type TemplateSummary,
 } from "../api.js";
+import { describeSchedule } from "../automationSchedule.js";
 import { Badge } from "../components/ui/badge.js";
 import { Button } from "../components/ui/button.js";
 import {
@@ -19,18 +21,51 @@ import {
   CardHeader,
   CardTitle,
 } from "../components/ui/card.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs.js";
 import { NavArtwork } from "../NavArtwork.jsx";
 import { useWorkspaceId } from "../session.jsx";
 import { ToolIcon } from "../ToolIcon.jsx";
 import { EmptyState, ErrorText, Field, Input, SectionHeader, Spinner } from "../ui.jsx";
 
+/**
+ * Where agents come from.
+ *
+ * Templates lead, because "which of these sounds like what I want" is a much
+ * easier question than "describe the system you need". Each one arrives
+ * configured — tools on, permissions drawn, schedule set — so the only thing
+ * between choosing it and using it is giving it a name.
+ */
+const CATEGORY_LABELS: Record<string, string> = {
+  personal: "Personal",
+  business: "Work",
+  development: "Development",
+  research: "Research",
+  education: "Learning",
+  fitness: "Health",
+  custom: "Other",
+};
+
+const CATEGORY_ORDER = ["personal", "business", "development", "research", "education", "fitness"];
+
 export function Agents() {
   const workspaceId = useWorkspaceId();
   const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [category, setCategory] = useState("all");
+  const [query, setQuery] = useState("");
+  const [chosen, setChosen] = useState<TemplateSummary | null>(null);
   const [name, setName] = useState("");
+  const [icon, setIcon] = useState<string | undefined>();
+  const [color, setColor] = useState<string | undefined>();
   const [description, setDescription] = useState("");
   const [proposal, setProposal] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,14 +84,17 @@ export function Agents() {
     void load();
   }, [load]);
 
-  const create = async (body: { templateId?: string; name?: string; manifest?: unknown }) => {
+  const create = async (body: {
+    templateId?: string;
+    name?: string;
+    manifest?: unknown;
+    icon?: string;
+    color?: string;
+  }) => {
     setBusy(true);
     setError(null);
     try {
-      const { agent } = await api.createAgent(workspaceId, {
-        ...body,
-        name: body.name ?? name.trim() ?? undefined,
-      });
+      const { agent } = await api.createAgent(workspaceId, body);
       navigate(`/agents/${agent.id}`);
     } catch (cause) {
       setError(
@@ -67,40 +105,190 @@ export function Agents() {
     }
   };
 
+  /** Opening the naming step, pre-filled from the template so it can be skipped. */
+  const choose = (template: TemplateSummary) => {
+    setChosen(template);
+    setName(template.name);
+    setIcon(template.icon ?? undefined);
+    setColor(template.color ?? undefined);
+    setError(null);
+  };
+
+  const shown = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    return templates.filter(
+      (template) =>
+        (category === "all" || template.category === category) &&
+        (!term ||
+          template.name.toLowerCase().includes(term) ||
+          template.description.toLowerCase().includes(term)),
+    );
+  }, [templates, category, query]);
+
+  const categories = useMemo(() => {
+    const present = new Set(templates.map((template) => template.category));
+    return CATEGORY_ORDER.filter((one) => present.has(one));
+  }, [templates]);
+
   if (!agents) return <Spinner label="Loading agents" />;
   const deployedCount = agents.filter((agent) => agent.status === "deployed").length;
 
   return (
     <div className="flex w-full flex-col gap-8">
+      {agents.length > 0 && (
+        <section className="flex flex-col gap-4">
+          <SectionHeader
+            title="Your agents"
+            description={`${agents.length} total, ${deployedCount} running`}
+          />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {agents.map((agent) => (
+              <Link key={agent.id} to={`/agents/${agent.id}`} className="group outline-none">
+                <Card className="h-full rounded-lg transition-shadow group-hover:shadow-md group-focus-visible:ring-3 group-focus-visible:ring-ring/50">
+                  <CardHeader>
+                    <AgentArtwork icon={agent.icon} color={agent.color} className="mb-2 size-10" />
+                    <CardTitle>{agent.name}</CardTitle>
+                    <CardDescription className="font-mono text-xs">{agent.slug}</CardDescription>
+                    <CardAction>
+                      <Badge
+                        variant={agent.status === "deployed" ? "secondary" : "outline"}
+                        className={
+                          agent.status === "deployed"
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                            : undefined
+                        }
+                      >
+                        {agent.status === "deployed" ? "running" : agent.status}
+                      </Badge>
+                    </CardAction>
+                  </CardHeader>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="flex flex-col gap-4">
         <SectionHeader
-          title="Create an agent"
-          description="Start with a focused template, a blank manifest, or describe the outcome and let Bridge draft the configuration."
+          title={agents.length === 0 ? "Create your first agent" : "Add an agent"}
+          description="Pick something close to what you want — everything about it can be changed afterwards."
         />
 
-        <Tabs defaultValue="describe" className="w-full">
+        <Tabs defaultValue="templates" className="w-full">
           <TabsList size="comfortable">
-            <TabsTrigger value="describe">
-              <NavArtwork name="generating" className="size-5" /> Describe
-            </TabsTrigger>
             <TabsTrigger value="templates">
-              <AgentArtwork group className="size-5" /> Templates
+              <AgentArtwork group className="size-5" /> Ready-made
+            </TabsTrigger>
+            <TabsTrigger value="describe">
+              <NavArtwork name="generating" className="size-5" /> Describe it
             </TabsTrigger>
             <TabsTrigger value="blank">
-              <FileCode2 /> Blank
+              <FileCode2 /> Start empty
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="templates" className="space-y-4 pt-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative sm:w-72">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search"
+                  aria-label="Search templates"
+                  className="pl-8"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <Button
+                  size="sm"
+                  variant={category === "all" ? "default" : "outline"}
+                  onClick={() => setCategory("all")}
+                >
+                  All
+                </Button>
+                {categories.map((one) => (
+                  <Button
+                    key={one}
+                    size="sm"
+                    variant={category === one ? "default" : "outline"}
+                    onClick={() => setCategory(one)}
+                  >
+                    {CATEGORY_LABELS[one] ?? one}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {shown.length === 0 ? (
+              <EmptyState title="Nothing matches that">Try a different word, or All.</EmptyState>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {shown.map((template) => (
+                  <Card
+                    key={template.id}
+                    className="flex flex-col rounded-lg transition-shadow hover:shadow-md"
+                  >
+                    <CardHeader>
+                      <AgentArtwork
+                        icon={template.icon}
+                        color={template.color}
+                        group={template.agents > 1}
+                        className="mb-2 size-10"
+                      />
+                      <CardTitle>{template.name}</CardTitle>
+                      <CardDescription>{template.description}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="mt-auto space-y-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {template.agents > 1 && (
+                          <Badge variant="secondary">{template.agents} agents</Badge>
+                        )}
+                        {template.tools.slice(0, 3).map((tool) => (
+                          <Badge key={tool} variant="outline">
+                            <ToolIcon tool={tool} className="size-4 rounded-sm" />
+                            {tool}
+                          </Badge>
+                        ))}
+                      </div>
+                      {template.schedules.length > 0 && (
+                        <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                          <CalendarClock className="size-3.5 shrink-0" />
+                          {describeSchedule(
+                            template.schedules[0]?.cron ?? undefined,
+                            template.schedules[0]?.every ?? undefined,
+                          )}
+                        </p>
+                      )}
+                      {/* Said before the choice, not discovered after it. */}
+                      {template.setup.length > 0 && (
+                        <p className="flex items-center gap-1.5 text-[12px] text-amber-700 dark:text-amber-400">
+                          <KeyRound className="size-3.5 shrink-0" />
+                          Needs {template.setup.join(", ")} connecting first
+                        </p>
+                      )}
+                      <Button className="w-full" onClick={() => choose(template)} disabled={busy}>
+                        Use this <ArrowRight />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
 
           <TabsContent value="describe" className="pt-4">
             <Card className="rounded-lg">
               <CardHeader>
-                <CardTitle>Design with Bridge</CardTitle>
+                <CardTitle>Describe what you want</CardTitle>
                 <CardDescription>
-                  Describe the job, boundaries, and approval requirements.
+                  Say what the agent should do and what it must ask before doing. Bridge writes the
+                  configuration, and you review it before anything is created.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 lg:grid-cols-[minmax(12rem,0.35fr)_minmax(20rem,1fr)_auto] lg:items-end">
-                <Field label="Agent name">
+                <Field label="Name it">
                   {(id) => (
                     <Input
                       id={id}
@@ -111,8 +299,8 @@ export function Agents() {
                   )}
                 </Field>
                 <Field
-                  label="What should this agent do?"
-                  hint="Include constraints and actions that should require approval."
+                  label="What should it do?"
+                  hint="Include anything it should check with you first."
                 >
                   {(id) => (
                     <Input
@@ -149,58 +337,23 @@ export function Agents() {
                   }
                 >
                   <NavArtwork name="generating" className="size-4" />
-                  {busy ? "Designing" : "Generate manifest"}
+                  {busy ? "Designing" : "Design it"}
                 </Button>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="templates" className="pt-4">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {templates.map((template) => (
-                <Card key={template.id} className="rounded-lg transition-shadow hover:shadow-md">
-                  <CardHeader>
-                    <AgentArtwork group={template.agents > 1} className="mb-2 size-9" />
-                    <CardTitle>{template.name}</CardTitle>
-                    <CardDescription>{template.description}</CardDescription>
-                    <CardAction>
-                      <Button
-                        size="icon-sm"
-                        onClick={() => void create({ templateId: template.id })}
-                        disabled={busy}
-                        aria-label={`Use ${template.name}`}
-                      >
-                        <ArrowRight />
-                      </Button>
-                    </CardAction>
-                  </CardHeader>
-                  <CardContent className="flex flex-wrap gap-1.5">
-                    <Badge variant="secondary">
-                      {template.agents} agent{template.agents === 1 ? "" : "s"}
-                    </Badge>
-                    {template.tools.slice(0, 3).map((tool) => (
-                      <Badge key={tool} variant="outline">
-                        <ToolIcon tool={tool} className="size-4 rounded-sm" />
-                        {tool}
-                      </Badge>
-                    ))}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
           <TabsContent value="blank" className="pt-4">
             <Card className="rounded-lg">
               <CardHeader>
-                <CardTitle>Blank manifest</CardTitle>
+                <CardTitle>Start empty</CardTitle>
                 <CardDescription>
-                  Create the minimum valid agent, then configure it in the agent workspace.
+                  One agent, no tools, nothing permitted. You set it up from the Setup tab.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end">
                 <div className="w-full max-w-xl">
-                  <Field label="Agent name">
+                  <Field label="Name it">
                     {(id) => (
                       <Input
                         id={id}
@@ -211,8 +364,11 @@ export function Agents() {
                     )}
                   </Field>
                 </div>
-                <Button onClick={() => void create({})} disabled={busy || !name.trim()}>
-                  <Plus /> Create blank agent
+                <Button
+                  onClick={() => void create({ name: name.trim() })}
+                  disabled={busy || !name.trim()}
+                >
+                  <Plus /> Create
                 </Button>
               </CardContent>
             </Card>
@@ -224,10 +380,10 @@ export function Agents() {
         {proposal && (
           <Card className="rounded-lg border-primary/25">
             <CardHeader>
-              <CardTitle>Proposed manifest</CardTitle>
+              <CardTitle>Here is what Bridge would build</CardTitle>
               <CardDescription>
-                {proposal.agents.length} configured agent{proposal.agents.length === 1 ? "" : "s"}.
-                Review before creating.
+                {proposal.agents.length} agent{proposal.agents.length === 1 ? "" : "s"}. Nothing is
+                created until you say so.
               </CardDescription>
               <CardAction>
                 <Badge>Draft</Badge>
@@ -239,8 +395,7 @@ export function Agents() {
               </pre>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => void create({ manifest: proposal })}>
-                  <AgentArtwork group={proposal.agents.length > 1} className="size-4" /> Create this
-                  agent
+                  <Plus /> Create this agent
                 </Button>
                 <Button variant="outline" onClick={() => setProposal(null)}>
                   Discard
@@ -251,43 +406,68 @@ export function Agents() {
         )}
       </section>
 
-      <section className="flex flex-col gap-4">
-        <SectionHeader
-          title="Agent fleet"
-          description={`${agents.length} total, ${deployedCount} deployed`}
-        />
-        {agents.length === 0 ? (
-          <EmptyState title="No agents yet">
-            Create a blank agent or start from a template above.
-          </EmptyState>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {agents.map((agent) => (
-              <Link key={agent.id} to={`/agents/${agent.id}`} className="group outline-none">
-                <Card className="h-full rounded-lg transition-shadow group-hover:shadow-md group-focus-visible:ring-3 group-focus-visible:ring-ring/50">
-                  <CardHeader>
-                    <AgentArtwork className="mb-2 size-9" />
-                    <CardTitle>{agent.name}</CardTitle>
-                    <CardDescription className="font-mono text-xs">{agent.slug}</CardDescription>
-                    <CardAction>
-                      <Badge
-                        variant={agent.status === "deployed" ? "secondary" : "outline"}
-                        className={
-                          agent.status === "deployed"
-                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
-                            : undefined
-                        }
-                      >
-                        {agent.status}
-                      </Badge>
-                    </CardAction>
-                  </CardHeader>
-                </Card>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
+      <Dialog open={chosen !== null} onOpenChange={(next) => !next && setChosen(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <form
+            onSubmit={(event: FormEvent) => {
+              event.preventDefault();
+              if (chosen) {
+                void create({ templateId: chosen.id, name: name.trim(), icon, color });
+              }
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Set up {chosen?.name}</DialogTitle>
+              <DialogDescription>
+                It comes ready to go. Give it a name and a face — everything else can be changed
+                later.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex items-start gap-4 py-6">
+              <AgentIconPicker
+                icon={icon}
+                color={color}
+                name={name}
+                onChange={(next) => {
+                  setIcon(next.icon);
+                  setColor(next.color);
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <Field label="Call it">
+                  {(id) => (
+                    <Input
+                      id={id}
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      required
+                      autoFocus
+                    />
+                  )}
+                </Field>
+                {chosen && chosen.setup.length > 0 && (
+                  <p className="mt-3 rounded-md border border-amber-300 bg-amber-50/60 px-2.5 py-2 text-[12px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
+                    You will need to connect {chosen.setup.join(", ")} in Settings → Tools before
+                    this can do its job.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <ErrorText>{error}</ErrorText>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setChosen(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !name.trim()}>
+                {busy ? "Creating…" : "Create agent"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
