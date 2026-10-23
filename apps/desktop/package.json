@@ -18,14 +18,14 @@
   },
   "dependencies": {
     "@bridge/core": "workspace:*",
-    "electron-updater": "^6.8.0"
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "electron": "^43.4.0",
-    "electron-builder": "^26.15.0",
-    "esbuild": "^0.25.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "@types/node": "^22.20.5",
+    "electron": "43.8.3",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   }
 }

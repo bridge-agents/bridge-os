@@ -14,15 +14,15 @@
   "dependencies": {
     "@bridge/commands": "workspace:*",
     "@bridge/core": "workspace:*",
-    "tsx": "^4.19.0"
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
     "@bridge/api": "workspace:*",
     "@bridge/db": "workspace:*",
     "@bridge/runtime": "workspace:*",
-    "@bridge/sdk": "workspace:*"
+    "@bridge/sdk": "workspace:*",
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   }
 }

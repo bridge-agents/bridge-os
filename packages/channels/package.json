@@ -16,11 +16,11 @@
     "@bridge/runtime": "workspace:*",
     "@bridge/sdk": "workspace:*",
     "@bridge/spec": "workspace:*",
-    "drizzle-orm": "^0.44.0"
+    "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   }
 }
