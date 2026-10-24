@@ -6,7 +6,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/migrations", "!**/dist"]
+    "includes": ["**", "!**/migrations", "!**/dist", "!**/pnpm-lock.yaml"]
   },
   "formatter": {
     "enabled": true,

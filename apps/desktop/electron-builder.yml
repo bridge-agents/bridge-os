@@ -29,12 +29,9 @@ extraResources:
   - from: build
     to: desktop/build
 
-# Where updates come from. Unset until Bridge has a release host; the app
-# checks only when packaged and treats a failure as "no update".
-publish:
-  provider: generic
-  url: https://updates.bridge.dev/desktop
-  channel: latest
+# Do not embed a placeholder update host into installs. Releases are installed
+# manually until an owner-controlled, signed update feed is configured.
+publish: null
 
 mac:
   category: public.app-category.productivity

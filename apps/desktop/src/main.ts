@@ -13,6 +13,7 @@ import {
   Tray,
 } from "electron";
 import { ApprovalWatcher } from "./approvals.js";
+import { externalLink, isAppNavigation } from "./navigation.js";
 import { type DesktopSettings, loadSettings, saveSettings } from "./settings.js";
 import { type RuntimeStatus, RuntimeSupervisor } from "./supervisor.js";
 
@@ -148,7 +149,7 @@ async function main(): Promise<void> {
  * an unreachable feed means "no update today".
  */
 async function checkForUpdates(): Promise<void> {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || !existsSync(join(resources, "app-update.yml"))) return;
   try {
     const { autoUpdater } = await import("electron-updater");
     autoUpdater.autoDownload = true;
@@ -178,6 +179,7 @@ function createWindow(): void {
       // browser would, so there is no privileged bridge to abuse.
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
@@ -195,14 +197,16 @@ function createWindow(): void {
 
   // Links to anywhere else are the browser's business, not ours.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    const safeUrl = externalLink(url);
+    if (safeUrl) void shell.openExternal(safeUrl).catch(() => {});
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
-    if (supervisor.url && !url.startsWith(supervisor.url)) {
-      event.preventDefault();
-      void shell.openExternal(url);
-    }
+    if (isAppNavigation(url, supervisor.url)) return;
+
+    event.preventDefault();
+    const safeUrl = externalLink(url);
+    if (safeUrl) void shell.openExternal(safeUrl).catch(() => {});
   });
 
   void open(supervisor.url ? "/" : undefined);

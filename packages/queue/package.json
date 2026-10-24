@@ -11,11 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "bullmq": "^5.34.0"
+    "bullmq": "^5.81.5"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   }
 }
