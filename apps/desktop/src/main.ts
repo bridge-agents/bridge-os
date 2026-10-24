@@ -149,7 +149,7 @@ async function main(): Promise<void> {
  * an unreachable feed means "no update today".
  */
 async function checkForUpdates(): Promise<void> {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || !existsSync(join(resources, "app-update.yml"))) return;
   try {
     const { autoUpdater } = await import("electron-updater");
     autoUpdater.autoDownload = true;

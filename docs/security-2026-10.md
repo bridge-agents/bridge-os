@@ -1,31 +1,36 @@
 # October 2026 security maintenance
 
-Use Node 24.22.1 for development and CI (`.node-version`). The engine range
-also permits the patched 22.23.4 and 26.12.1 release lines and later patches.
-These releases address the [October 21 Node security advisory](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
+Development and CI use Node 24.22.1. Engines also permit patched Node 22.23.4
+and 26.12.1 release lines and later patches. See the
+[October 21 Node advisory](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
 
-The dependency refresh updates Hono, Vite, Vitest, Happy DOM, Electron and
-affected transitive libraries. The desktop renderer may open only HTTP,
-HTTPS and mailto links in the operating system. In-app navigation requires
-the application's exact origin; prefix lookalikes and URLs containing
-credentials are rejected. The renderer explicitly enables Chromium's sandbox.
+The owner explicitly selected **Electron 46.0.0-alpha.1** to obtain its patched
+Node 24.22.1. Stable Electron releases still use Node 24.22.0 at this review.
+This is an intentionally prerelease desktop build, version 0.1.1-alpha.1;
+compatibility risk remains until a supported stable Electron incorporates the fixes.
+The installed Electron binary was queried directly to verify its Node version.
 
-## Remaining dependencies requiring follow-up
+Renderer links allow only HTTP, HTTPS and mailto. In-app navigation requires
+the exact application origin, rejecting credentials and prefix lookalikes.
+The renderer explicitly enables Chromium's sandbox. The placeholder update
+host was removed; packaged builds do not contact an update service unless an
+owner-configured app-update.yml exists. Install this alpha manually.
 
-- **Electron's bundled Node remains behind the security release.** Electron
-  43.8.3 includes Node 24.22.0. Updating the system's Node does not update the
-  runtime bundled in Electron or the API process launched through it. Adopt
-  an Electron release containing the Node fixes when the vendor publishes it.
-  This update must not be described as resolving every Node vulnerability.
-- **braces 3.0.3** remains in the development-only shadcn CLI dependency tree.
-  GHSA-vfj7-8cjw-p6xm currently has no patched release. Do not pass untrusted
-  glob patterns to that tool.
-- **esbuild 0.18.20** remains under Drizzle Kit's legacy loader. Its advisory
-  concerns serving content through the development server. Application builds
-  use a separate patched esbuild; do not expose Drizzle tooling to the network.
-  Removing the legacy loader requires an upstream Drizzle Kit update.
+## Dependency follow-up on 24 October
 
-Validation: all 661 tests, lint, type checking and the web/API/CLI build pass
-on Node 24.22.1. A fresh OSV scan of the lockfile reports only the braces and
-legacy esbuild findings above; OSV package checks do not inspect Electron's
-embedded Node binary.
+- Happy DOM is upgraded to 21.0.4 for the newly published host-code-execution fix.
+- The Drizzle legacy loader resolves esbuild 0.25.12 through a scoped override.
+  Its real CLI successfully generates the existing PostgreSQL schema into an
+  isolated output directory; no database migration is applied by that check.
+- GitHub withdrew GHSA-vfj7-8cjw-p6xm for braces on 23 October as not
+  practically exploitable. It is no longer counted as an active vulnerability.
+
+Validation: all 661 tests, lint, type checking and application builds pass.
+The updated Happy DOM web tests and types also pass. A new OSV scan of the
+changed lockfile reports no active matches. This describes known dependency
+advisories, not a guarantee against every possible application vulnerability.
+
+Apple Silicon macOS ZIP and DMG artifacts are built locally. The DMG is created
+with macOS hdiutil because the bundled dmgbuild Python fails to import encodings
+on this machine. The build is not notarized; other platforms have not been
+packaged or smoke-tested in this pass.
